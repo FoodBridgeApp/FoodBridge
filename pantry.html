@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pantry Manager</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{--bg:#0b1020;--card:#121a2e;--text:#e9f2ff;--muted:#9fb0c9;--accent:#60a5fa;--ok:#22c55e;--warn:#f59e0b;--err:#ef4444;--chip:#1a2442}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 ui-sans-serif,system-ui,Segoe UI,Roboto,Arial}
+    .wrap{max-width:980px;margin:24px auto;padding:0 16px}
+    .row{display:flex;gap:10px;align-items:center}
+    .card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25);margin-bottom:16px}
+    .title{margin:0 0 8px 0;font-size:18px}
+    .muted{color:var(--muted)}
+    input,select{width:100%;padding:10px;border-radius:10px;border:1px solid #26324d;background:#0e1527;color:#eaf1ff}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #2a3b63;background:#0f1a31;color:#eaf1ff;cursor:pointer}
+    .btn:hover{border-color:#3b5796}
+    .accent{background:linear-gradient(180deg,#1f3b73,#152b52);border-color:#4d77c7}
+    ul{list-style:none;padding:0;margin:0}
+    li{display:flex;align-items:center;justify-content:space-between;padding:10px;border-bottom:1px solid #1d2943}
+    .pill{display:inline-flex;align-items:center;gap:8px;border:1px solid #233354;border-radius:999px;padding:6px 10px;background:#0f1c35}
+    .chip{display:inline-flex;align-items:center;gap:8px;background:var(--chip);border:1px solid #2a3e68;border-radius:999px;padding:6px 10px}
+    a{color:#9cc2ff;text-decoration:none}
+    a:hover{text-decoration:underline}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <div class="pill">
+        <a href="/index.html">← Back to planner</a>
+      </div>
+      <div class="muted">Pantry items here are auto-excluded from every recipe.</div>
+    </div>
+
+    <div class="card">
+      <h2 class="title">Add pantry item</h2>
+      <div class="row" style="gap:10px">
+        <input id="pantryInput" placeholder="e.g., salt" />
+        <button id="addBtn" class="btn accent">Add</button>
+        <button id="clearBtn" class="btn">Clear all</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="title">Your pantry</h2>
+      <ul id="pantryList"></ul>
+      <div class="muted" id="emptyMsg" style="display:none">No pantry items yet.</div>
+    </div>
+  </div>
+
+  <script>
+    const LS_KEY = "pantryItems:v1";
+
+    function loadPantry(){
+      try{
+        return JSON.parse(localStorage.getItem(LS_KEY)) || [];
+      }catch{ return []; }
+    }
+    function savePantry(items){
+      localStorage.setItem(LS_KEY, JSON.stringify(items));
+    }
+    function render(){
+      const list = document.getElementById("pantryList");
+      const empty = document.getElementById("emptyMsg");
+      const items = loadPantry();
+      list.innerHTML = "";
+      if(items.length===0){
+        empty.style.display="block";
+        return;
+      }
+      empty.style.display="none";
+      items.forEach((name,idx)=>{
+        const li = document.createElement("li");
+        li.innerHTML = `
+          <span class="chip">${name}</span>
+          <button class="btn" data-idx="${idx}">Remove</button>
+        `;
+        list.appendChild(li);
+      });
+      list.querySelectorAll("button[data-idx]").forEach(btn=>{
+        btn.addEventListener("click",()=>{
+          const i = Number(btn.getAttribute("data-idx"));
+          const arr = loadPantry();
+          arr.splice(i,1);
+          savePantry(arr);
+          render();
+        });
+      });
+    }
+
+    document.getElementById("addBtn").addEventListener("click",()=>{
+      const input = document.getElementById("pantryInput");
+      const val = input.value.trim();
+      if(!val) return;
+      const items = loadPantry();
+      if(!items.includes(val.toLowerCase())){
+        items.push(val.toLowerCase());
+        savePantry(items);
+      }
+      input.value="";
+      render();
+    });
+    document.getElementById("clearBtn").addEventListener("click",()=>{
+      if(confirm("Clear ALL pantry items?")){ savePantry([]); render(); }
+    });
+
+    render();
+  </script>
+</body>
+</html>

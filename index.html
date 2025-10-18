@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>FoodBridge – Instacart-first MVP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <style>
+    :root{
+      --bg:#0b1220; --panel:#111a2b; --soft:#1a2540; --muted:#94a3b8; --text:#e6edf6; --acc:#22c55e; --warn:#f59e0b; --err:#ef4444;
+    }
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif}
+    .wrap{max-width:1200px;margin:0 auto;padding:24px}
+    .row{display:flex;gap:10px;align-items:center}
+    .right{margin-left:auto}
+    .pill{display:inline-flex;gap:8px;align-items:center;background:var(--soft);padding:6px 10px;border-radius:999px}
+    .dot{width:8px;height:8px;border-radius:999px;background:var(--muted)}
+    .ok{background:var(--acc)} .warn{background:var(--warn)} .bad{background:var(--err)}
+    .card{background:var(--panel);padding:16px;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.25);margin:16px 0}
+    h1,h2,h3{margin:0 0 12px} h1{font-size:22px} h2{font-size:18px}
+    .muted{color:var(--muted)}
+    input,select,textarea{width:100%;background:#0f172a;border:1px solid #22304a;color:var(--text);padding:8px 10px;border-radius:8px}
+    button{background:#22304a;border:1px solid #334769;color:var(--text);padding:8px 12px;border-radius:10px;cursor:pointer}
+    button.accent{background:var(--acc);border:none;color:#04130a;font-weight:600}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    table{width:100%;border-collapse:collapse} th,td{padding:10px;border-bottom:1px solid #1f2b47} th{color:#9fb0c8;text-align:left}
+    .chips{display:flex;flex-wrap:wrap;gap:8px}
+    .chip{background:#132042;border:1px solid #203459;padding:6px 10px;border-radius:999px}
+    .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .title{font-weight:700}
+    .inline-input{display:inline-flex;gap:8px;align-items:center}
+    .feeLine{display:flex;justify-content:space-between;border-bottom:1px dashed #233;padding:6px 0}
+    .stickySummary{position:sticky;top:0;background:linear-gradient(180deg,rgba(11,18,32,.95),rgba(11,18,32,.7));backdrop-filter: blur(6px);padding:10px;border-radius:12px;z-index:5}
+    .badge{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;background:#0f1b34;border:1px solid #253453}
+    .toast{position:fixed;right:16px;bottom:16px;background:#0f1b34;border:1px solid #2a3e63;padding:10px 12px;border-radius:10px;z-index:50;display:none}
+    .json{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;background:#0b1326;border:1px solid #23385f;padding:12px;border-radius:10px;max-height:300px;overflow:auto}
+
+    /* Loader: bread spinner */
+    .loader { display:none; position:fixed; inset:0; background:rgba(0,0,0,.35); align-items:center; justify-content:center; z-index:60; }
+    .loaderInner { display:flex; flex-direction:column; align-items:center; gap:10px; }
+    .loaf {
+      width:44px; height:28px; border-radius:14px 14px 8px 8px/16px 16px 12px 12px;
+      background:linear-gradient(180deg,#d9a25a,#b8762c); position:relative; box-shadow:inset 0 -6px 0 rgba(0,0,0,.15);
+      animation: rise 1.2s infinite ease-in-out alternate;
+    }
+    .loaf:before, .loaf:after{ content:""; position:absolute; top:6px; width:10px; height:6px; background:#f1d3a4; border-radius:6px; }
+    .loaf:before{ left:8px;} .loaf:after{ right:8px;}
+    @keyframes rise { from{ transform:translateY(3px)} to{ transform:translateY(-3px)} }
+
+    /* PRINT */
+    #printContainer { display:none }
+    @media print {
+      body { background:#fff; color:#000 }
+      .no-print, .wrap > :not(#printContainer) { display:none !important }
+      #printContainer { display:block !important; }
+      #printContainer h2, #printContainer h3 { break-after:avoid }
+      #printContainer li { break-inside:avoid; page-break-inside:avoid }
+      #printContainer .card { border:0; box-shadow:none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row no-print" style="gap:12px;margin-bottom:14px">
+      <div class="pill"><span id="healthDot" class="dot warn"></span><span id="healthText" class="muted">checking…</span></div>
+      <div id="statusChip" class="badge">Loading integrations…</div>
+      <div class="right muted">Instacart-first MVP • Multi-recipe planning</div>
+    </div>
+
+    <div class="stickySummary row no-print">
+      <div class="badge">Baseline: <strong id="sumBaseline" style="margin-left:6px">$0.00</strong></div>
+      <div class="badge">Optimized: <strong id="sumOptimized" style="margin-left:6px">$0.00</strong></div>
+      <div class="badge">Savings: <strong id="sumSavings" style="margin-left:6px">$0.00</strong></div>
+      <div class="badge">Due now: <strong id="sumDue" style="margin-left:6px">$0.00</strong></div>
+      <div class="right inline-input">
+        <label class="muted">Units</label>
+        <select id="unitToggle" style="width:auto">
+          <option value="metric" selected>Metric (g/ml)</option>
+          <option value="us">US (cups/oz)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card no-print">
+      <h2 class="title">Add a recipe</h2>
+      <div class="grid-3">
+        <div>
+          <div class="muted" style="margin-bottom:6px">Recipe title</div>
+          <input id="titleInput" placeholder="e.g., Margherita Pizza" />
+        </div>
+        <div>
+          <div class="muted" style="margin-bottom:6px">Servings</div>
+          <input id="servingsInput" type="number" min="1" value="2" />
+        </div>
+        <div>
+          <div class="muted" style="margin-bottom:6px">Diet</div>
+          <select id="dietSelect">
+            <option value="">None</option>
+            <option>vegan</option>
+            <option>vegetarian</option>
+            <option>keto</option>
+            <option>paleo</option>
+            <option>low sodium</option>
+            <option>low phosphorus</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-top:12px">
+        <div>
+          <div class="muted" style="margin-bottom:6px">Exclude pantry items (comma-separated)</div>
+          <input id="excludesInput" placeholder="salt, pepper, olive oil" />
+        </div>
+        <div>
+          <div class="muted" style="margin-bottom:6px">Import from URL (blog/IG/TikTok)</div>
+          <div class="row">
+            <input id="importUrl" placeholder="https://..." />
+            <button id="importBtn">Import</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px;gap:12px">
+        <button id="suggestAddBtn" class="btn accent">Suggest & add</button>
+        <button id="clearPlanBtn" class="btn">Clear plan</button>
+        <button id="savePlanBtn" class="btn">Save plan</button>
+        <button id="loadPlanBtn" class="btn">Load plan</button>
+        <button id="printBtn" class="btn">Print / Save PDF</button>
+        <button id="previewBtn" class="btn right">Preview Instacart payload</button>
+      </div>
+    </div>
+
+    <div class="card no-print">
+      <h2 class="title">Current plan</h2>
+      <div id="planChips" class="chips"></div>
+      <div id="planCards" class="grid-2" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card no-print">
+      <h2 class="title">Merged shopping list</h2>
+      <div class="row" style="margin-bottom:8px">
+        <button id="optimizeAllBtn" class="btn">Optimize all</button>
+        <button id="useDefaultAllBtn" class="btn">Use defaults for all</button>
+        <div class="right muted" id="summaryText"></div>
+      </div>
+      <div style="overflow:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Ingredient</th>
+              <th>Qty</th>
+              <th>Unit</th>
+              <th>Notes</th>
+              <th>Row mode</th>
+              <th>Most affordable choice</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="ingredientsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card no-print">
+      <h2 class="title">Service fee & checkout</h2>
+      <div class="feeLine"><span class="muted">Estimated subtotal (baseline)</span><strong id="feeBaseline">$0.00</strong></div>
+      <div class="feeLine"><span class="muted">Estimated subtotal (optimized)</span><strong id="feeOptimized">$0.00</strong></div>
+      <div class="feeLine"><span class="muted">Estimated savings</span><strong id="feeSavings">$0.00</strong></div>
+      <div class="feeLine"><span class="muted">Service fee</span><strong id="feeService">$0.00</strong></div>
+      <div class="feeLine"><span>Total due now</span><strong id="feeTotal">$0.00</strong></div>
+      <div class="row" style="margin-top:12px">
+        <button id="checkoutBtn" class="btn accent">Charge service fee & continue</button>
+        <div id="checkoutMsg" class="muted"></div>
+      </div>
+    </div>
+
+    <div class="card no-print">
+      <h2 class="title">Email this plan</h2>
+      <div class="row" style="gap:12px;align-items:flex-end">
+        <div style="flex:1">
+          <div class="muted" style="margin-bottom:6px">Recipient email</div>
+          <input id="emailTo" placeholder="name@email.com" />
+        </div>
+        <div style="flex:2">
+          <div class="muted" style="margin-bottom:6px">Optional personal note</div>
+          <input id="emailNote" placeholder="Any dietary notes or special message…" />
+        </div>
+        <button id="emailBtn" class="btn">Send plan email</button>
+      </div>
+      <div class="muted" style="margin-top:6px">Subject & company message are generated automatically.</div>
+    </div>
+
+    <!-- Print-only container -->
+    <div id="printContainer" class="card">
+      <div id="printRoot"></div>
+    </div>
+
+    <div id="previewModal" class="card no-print" style="display:none;position:fixed;inset:40px;max-width:900px;margin:auto;z-index:20;overflow:auto">
+      <div class="row" style="align-items:center;margin-bottom:8px">
+        <h3 class="title" style="margin:0">Instacart payload preview (mock)</h3>
+        <button id="closePreviewBtn" class="btn right">Close</button>
+      </div>
+      <pre id="previewJson" class="json"></pre>
+    </div>
+
+    <!-- Loader -->
+    <div id="loader" class="loader" role="status" aria-label="Loading">
+      <div class="loaderInner">
+        <div class="loaf" aria-hidden="true"></div>
+        <div class="muted">Baking your plan…</div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

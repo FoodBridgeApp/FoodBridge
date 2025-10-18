@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Mock Instacart Handoff</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: ui-sans-serif, system-ui, Arial, sans-serif; background:#0b0f12; color:#dbe3ea; margin:0; padding:24px; }
+    .card { background:#11161c; border:1px solid #1e2832; border-radius:12px; padding:16px; max-width:700px; margin: 0 auto; }
+    .row { display:flex; gap:10px; align-items:center; }
+    .btn { background:#2563eb; border:1px solid #1e40af; color:#fff; padding:10px 12px; border-radius:10px; cursor:pointer; text-decoration:none; }
+    .muted { color:#9fb0bd; font-size:13px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Mock Instacart Handoff</h2>
+    <p class="muted">This simulates the redirect after paying your service fee.</p>
+    <div id="summary"></div>
+    <div class="row" style="margin-top:12px">
+      <a href="/" class="btn">Back to app</a>
+    </div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const fee = params.get("service_fee") || "0.00";
+    const sub = params.get("subtotal") || "0.00";
+    const success = params.get("success");
+    const el = document.getElementById("summary");
+    el.innerHTML = success
+      ? `<p>✅ Stripe success!</p><p>Subtotal (optimized items only): $${sub}</p><p>Service fee paid: $${fee}</p><p>Now you would be deep-linked to Instacart to finish checkout.</p>`
+      : `<p>Subtotal (optimized items only): $${sub}</p><p>Service fee (to be charged): $${fee}</p><p>Now you would be deep-linked to Instacart to finish checkout.</p>`;
+  </script>
+</body>
+</html>
