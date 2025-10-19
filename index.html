@@ -1,97 +1,138 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>FoodBridge – Instacart-first MVP</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark light" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FoodBridge</title>
   <style>
     :root{
-      --bg:#0b1220; --panel:#111a2b; --soft:#1a2540; --muted:#94a3b8; --text:#e6edf6; --acc:#22c55e; --warn:#f59e0b; --err:#ef4444;
+      --ink:#e5e7eb; --ink-2:#cbd5e1; --muted:#cbd5e1;
+      --bg:#0b1020; --card:#111827; --soft:#1f2937; --divider:#1f2a42;
+      --accent:#f59e0b; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444;
+
+      --ctrl-bg:#ffffff; --ctrl-ink:#111; --ctrl-bd:#d1d5db; --ctrl-bd-focus:#9ca3af; --ctrl-placeholder:#6b7280;
     }
-    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif}
-    .wrap{max-width:1200px;margin:0 auto;padding:24px}
-    .row{display:flex;gap:10px;align-items:center}
+    @media (prefers-color-scheme: light){
+      :root{
+        --ink:#0b0f19; --ink-2:#374151; --muted:#374151;
+        --bg:#f6f7fb; --card:#ffffff; --soft:#edf2f7; --divider:#e5e7eb;
+        --ctrl-bg:#ffffff; --ctrl-ink:#111;
+      }
+    }
+
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Arial}
+    .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .right{margin-left:auto}
-    .pill{display:inline-flex;gap:8px;align-items:center;background:var(--soft);padding:6px 10px;border-radius:999px}
-    .dot{width:8px;height:8px;border-radius:999px;background:var(--muted)}
-    .ok{background:var(--acc)} .warn{background:var(--warn)} .bad{background:var(--err)}
-    .card{background:var(--panel);padding:16px;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.25);margin:16px 0}
-    h1,h2,h3{margin:0 0 12px} h1{font-size:22px} h2{font-size:18px}
     .muted{color:var(--muted)}
-    input,select,textarea{width:100%;background:#0f172a;border:1px solid #22304a;color:var(--text);padding:8px 10px;border-radius:8px}
-    button{background:#22304a;border:1px solid #334769;color:var(--text);padding:8px 12px;border-radius:10px;cursor:pointer}
-    button.accent{background:var(--acc);border:none;color:#04130a;font-weight:600}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    table{width:100%;border-collapse:collapse} th,td{padding:10px;border-bottom:1px solid #1f2b47} th{color:#9fb0c8;text-align:left}
-    .chips{display:flex;flex-wrap:wrap;gap:8px}
-    .chip{background:#132042;border:1px solid #203459;padding:6px 10px;border-radius:999px}
-    .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .title{margin:0 0 10px 0;font-size:20px}
+    .pill{display:inline-flex;gap:8px;align-items:center;background:var(--soft);border-radius:999px;padding:6px 10px;font-size:12px}
+    .pill .dot{width:8px;height:8px;border-radius:999px;display:inline-block;background:#777}
+    .pill .dot.ok{background:var(--ok)} .pill .dot.warn{background:var(--warn)} .pill .dot.err{background:var(--err)}
+
+    .card{background:var(--card);border:1px solid var(--divider);border-radius:14px;padding:16px;margin:14px 0}
+    .grid-3{display:grid;grid-template-columns:1fr 140px 180px;gap:12px}
     .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .title{font-weight:700}
-    .inline-input{display:inline-flex;gap:8px;align-items:center}
-    .feeLine{display:flex;justify-content:space-between;border-bottom:1px dashed #233;padding:6px 0}
-    .stickySummary{position:sticky;top:0;background:linear-gradient(180deg,rgba(11,18,32,.95),rgba(11,18,32,.7));backdrop-filter: blur(6px);padding:10px;border-radius:12px;z-index:5}
-    .badge{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;background:#0f1b34;border:1px solid #253453}
-    .toast{position:fixed;right:16px;bottom:16px;background:#0f1b34;border:1px solid #2a3e63;padding:10px 12px;border-radius:10px;z-index:50;display:none}
-    .json{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;background:#0b1326;border:1px solid #23385f;padding:12px;border-radius:10px;max-height:300px;overflow:auto}
+    .stack-8>*{margin:8px 0}
 
-    /* Loader: bread spinner */
-    .loader { display:none; position:fixed; inset:0; background:rgba(0,0,0,.35); align-items:center; justify-content:center; z-index:60; }
-    .loaderInner { display:flex; flex-direction:column; align-items:center; gap:10px; }
-    .loaf {
-      width:44px; height:28px; border-radius:14px 14px 8px 8px/16px 16px 12px 12px;
-      background:linear-gradient(180deg,#d9a25a,#b8762c); position:relative; box-shadow:inset 0 -6px 0 rgba(0,0,0,.15);
-      animation: rise 1.2s infinite ease-in-out alternate;
+    input,select,textarea{
+      width:100%;background:var(--ctrl-bg);color:var(--ctrl-ink);border:1px solid var(--ctrl-bd);
+      border-radius:10px;padding:10px;outline:none
     }
-    .loaf:before, .loaf:after{ content:""; position:absolute; top:6px; width:10px; height:6px; background:#f1d3a4; border-radius:6px; }
-    .loaf:before{ left:8px;} .loaf:after{ right:8px;}
-    @keyframes rise { from{ transform:translateY(3px)} to{ transform:translateY(-3px)} }
+    input:focus,select:focus,textarea:focus{border-color:var(--ctrl-bd-focus);box-shadow:0 0 0 3px rgba(245,158,11,.18)}
+    input::placeholder,textarea::placeholder{color:var(--ctrl-placeholder)}
 
-    /* PRINT */
-    #printContainer { display:none }
-    @media print {
-      body { background:#fff; color:#000 }
-      .no-print, .wrap > :not(#printContainer) { display:none !important }
-      #printContainer { display:block !important; }
-      #printContainer h2, #printContainer h3 { break-after:avoid }
-      #printContainer li { break-inside:avoid; page-break-inside:avoid }
-      #printContainer .card { border:0; box-shadow:none; }
+    /* ✅ Radios / checkboxes: white background + gold accent */
+    input[type="radio"],input[type="checkbox"]{accent-color:var(--accent);background:#fff}
+
+    /* ✅ Buttons: white or gold (no black/dark buttons) */
+    .btn{
+      background:#fff;
+      color:#111;
+      border:1px solid var(--ctrl-bd);
+      border-radius:12px;
+      padding:10px 14px;
+      cursor:pointer;
+      transition:box-shadow .15s ease, transform .02s ease;
+    }
+    .btn:hover{box-shadow:0 2px 10px rgba(0,0,0,.12)}
+    .btn:active{transform:translateY(1px)}
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+
+    .btn.accent{
+      background:linear-gradient(180deg,#fbbf24,#b45309);
+      color:#111;
+      border:1px solid #daa10a;
+    }
+    .btn.outline{
+      background:#fff;
+      color:#111;
+      border:1px dashed var(--ctrl-bd);
+    }
+    .btn.small{padding:6px 10px;border-radius:10px}
+
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid var(--divider);padding:10px;text-align:left;vertical-align:top}
+    th{color:var(--ink-2);font-weight:600}
+
+    .chips{display:flex;gap:8px;flex-wrap:wrap}
+    .chip{background:var(--soft);border:1px solid var(--divider);color:var(--ink);padding:6px 10px;border-radius:999px;font-size:12px}
+
+    .feeLine{display:flex;justify-content:space-between;border-bottom:1px dashed var(--divider);padding:6px 0}
+    .feeLine strong{font-variant-numeric:tabular-nums}
+
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap}
+
+    /* 🥖 Baguette spinner */
+    .spinner{display:inline-flex;align-items:center;gap:8px}
+    .baguette{
+      width:26px;height:26px; display:inline-block; position:relative;
+    }
+    .baguette:before{
+      content:""; position:absolute; inset:0;
+      background:
+        radial-gradient(6px 10px at 70% 50%, #d97706 60%, transparent 61%),
+        radial-gradient(6px 10px at 30% 50%, #d97706 60%, transparent 61%),
+        linear-gradient(#f59e0b, #d97706);
+      border-radius:20px/10px;
+      transform-origin:center;
+      animation:spin 1.1s linear infinite;
+    }
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* PRINT: only print the full plan container; avoid breaking steps */
+    @media print{
+      body *{visibility:hidden !important}
+      #printContainer, #printContainer *{visibility:visible !important}
+      #printContainer{position:absolute;inset:0;margin:0;padding:24px;background:#fff;color:#111}
+      .no-print{display:none !important}
+      .step{break-inside:avoid}
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="row no-print" style="gap:12px;margin-bottom:14px">
-      <div class="pill"><span id="healthDot" class="dot warn"></span><span id="healthText" class="muted">checking…</span></div>
-      <div id="statusChip" class="badge">Loading integrations…</div>
-      <div class="right muted">Instacart-first MVP • Multi-recipe planning</div>
-    </div>
-
-    <div class="stickySummary row no-print">
-      <div class="badge">Baseline: <strong id="sumBaseline" style="margin-left:6px">$0.00</strong></div>
-      <div class="badge">Optimized: <strong id="sumOptimized" style="margin-left:6px">$0.00</strong></div>
-      <div class="badge">Savings: <strong id="sumSavings" style="margin-left:6px">$0.00</strong></div>
-      <div class="badge">Due now: <strong id="sumDue" style="margin-left:6px">$0.00</strong></div>
-      <div class="right inline-input">
-        <label class="muted">Units</label>
-        <select id="unitToggle" style="width:auto">
-          <option value="metric" selected>Metric (g/ml)</option>
-          <option value="us">US (cups/oz)</option>
-        </select>
+    <!-- Top bar -->
+    <div class="row">
+      <div class="pill" id="healthPill"><span class="dot warn" id="healthDot"></span><span id="healthText">checking…</span></div>
+      <div class="muted">Instacart-first MVP • Multi-recipe planning</div>
+      <div class="right spinner" id="globalSpinner" role="status" aria-label="Loading" style="display:none">
+        <span class="baguette"></span><span class="muted">Working…</span>
       </div>
     </div>
 
-    <div class="card no-print">
+    <!-- Add a recipe -->
+    <div class="card">
       <h2 class="title">Add a recipe</h2>
       <div class="grid-3">
         <div>
           <div class="muted" style="margin-bottom:6px">Recipe title</div>
-          <input id="titleInput" placeholder="e.g., Margherita Pizza" />
+          <input id="titleInput" placeholder="e.g., Margherita Pizza"/>
         </div>
         <div>
           <div class="muted" style="margin-bottom:6px">Servings</div>
-          <input id="servingsInput" type="number" min="1" value="2" />
+          <input id="servingsInput" type="number" min="1" value="2"/>
         </div>
         <div>
           <div class="muted" style="margin-bottom:6px">Diet</div>
@@ -107,54 +148,55 @@
         </div>
       </div>
 
-      <div class="grid-2" style="margin-top:12px">
+      <div class="stack-8" style="margin-top:10px">
         <div>
           <div class="muted" style="margin-bottom:6px">Exclude pantry items (comma-separated)</div>
-          <input id="excludesInput" placeholder="salt, pepper, olive oil" />
+          <input id="excludesInput" placeholder="salt, pepper, olive oil"/>
         </div>
-        <div>
-          <div class="muted" style="margin-bottom:6px">Import from URL (blog/IG/TikTok)</div>
-          <div class="row">
-            <input id="importUrl" placeholder="https://..." />
-            <button id="importBtn">Import</button>
+        <div class="grid-2">
+          <div>
+            <div class="muted" style="margin-bottom:6px">Import from URL (recipe page, Instagram Reel, TikTok)</div>
+            <input id="importUrlInput" placeholder="https://example.com/recipe"/>
+          </div>
+          <div>
+            <div class="muted" style="margin-bottom:6px">Upload audio (we’ll transcribe to a recipe)</div>
+            <input id="audioFileInput" type="file" accept="audio/*"/>
           </div>
         </div>
       </div>
 
-      <div class="row" style="margin-top:12px;gap:12px">
-        <button id="suggestAddBtn" class="btn accent">Suggest & add</button>
-        <button id="clearPlanBtn" class="btn">Clear plan</button>
+      <div class="toolbar" style="margin-top:12px">
+        <button id="suggestAddBtn" class="btn accent">Suggest ingredients & add to plan</button>
+        <button id="importUrlBtn" class="btn">Import from URL</button>
+        <button id="uploadAudioBtn" class="btn">Upload audio</button>
+        <button id="clearPlanBtn" class="btn outline">Clear plan</button>
         <button id="savePlanBtn" class="btn">Save plan</button>
         <button id="loadPlanBtn" class="btn">Load plan</button>
-        <button id="printBtn" class="btn">Print / Save PDF</button>
         <button id="previewBtn" class="btn right">Preview Instacart payload</button>
+        <button id="printBtn" class="btn">Print full plan</button>
       </div>
     </div>
 
-    <div class="card no-print">
+    <!-- Current plan -->
+    <div class="card">
       <h2 class="title">Current plan</h2>
       <div id="planChips" class="chips"></div>
-      <div id="planCards" class="grid-2" style="margin-top:12px"></div>
     </div>
 
-    <div class="card no-print">
+    <!-- Merged shopping list -->
+    <div class="card">
       <h2 class="title">Merged shopping list</h2>
       <div class="row" style="margin-bottom:8px">
-        <button id="optimizeAllBtn" class="btn">Optimize all</button>
+        <button id="optimizeAllBtn" class="btn">Optimize all (Most affordable)</button>
         <button id="useDefaultAllBtn" class="btn">Use defaults for all</button>
-        <div class="right muted" id="summaryText"></div>
+        <div class="right muted" id="summaryText">—</div>
       </div>
       <div style="overflow:auto">
         <table>
           <thead>
             <tr>
-              <th>Ingredient</th>
-              <th>Qty</th>
-              <th>Unit</th>
-              <th>Notes</th>
-              <th>Row mode</th>
-              <th>Most affordable choice</th>
-              <th>Actions</th>
+              <th>Ingredient</th><th>Qty</th><th>Unit</th><th>Notes</th>
+              <th>Row mode</th><th>Most affordable choice</th><th>Actions</th>
             </tr>
           </thead>
           <tbody id="ingredientsBody"></tbody>
@@ -162,11 +204,11 @@
       </div>
     </div>
 
-    <div class="card no-print">
+    <!-- Checkout / Fees -->
+    <div class="card">
       <h2 class="title">Service fee & checkout</h2>
-      <div class="feeLine"><span class="muted">Estimated subtotal (baseline)</span><strong id="feeBaseline">$0.00</strong></div>
-      <div class="feeLine"><span class="muted">Estimated subtotal (optimized)</span><strong id="feeOptimized">$0.00</strong></div>
-      <div class="feeLine"><span class="muted">Estimated savings</span><strong id="feeSavings">$0.00</strong></div>
+      <div class="feeLine"><span class="muted">Estimated subtotal (mock)</span><strong id="feeSubtotal">$0.00</strong></div>
+      <div class="feeLine"><span class="muted">Estimated savings (optimization)</span><strong id="feeSavings">$0.00</strong></div>
       <div class="feeLine"><span class="muted">Service fee</span><strong id="feeService">$0.00</strong></div>
       <div class="feeLine"><span>Total due now</span><strong id="feeTotal">$0.00</strong></div>
       <div class="row" style="margin-top:12px">
@@ -175,44 +217,30 @@
       </div>
     </div>
 
-    <div class="card no-print">
-      <h2 class="title">Email this plan</h2>
-      <div class="row" style="gap:12px;align-items:flex-end">
-        <div style="flex:1">
-          <div class="muted" style="margin-bottom:6px">Recipient email</div>
-          <input id="emailTo" placeholder="name@email.com" />
-        </div>
-        <div style="flex:2">
-          <div class="muted" style="margin-bottom:6px">Optional personal note</div>
-          <input id="emailNote" placeholder="Any dietary notes or special message…" />
-        </div>
-        <button id="emailBtn" class="btn">Send plan email</button>
+    <!-- Email -->
+    <div class="card">
+      <h2 class="title">Email the plan</h2>
+      <div class="grid-2">
+        <input id="emailToInput" placeholder="Recipient email"/>
+        <input id="emailNoteInput" placeholder="Optional personal note (we’ll still add our friendly company note)"/>
       </div>
-      <div class="muted" style="margin-top:6px">Subject & company message are generated automatically.</div>
+      <div class="row" style="margin-top:12px">
+        <button id="emailBtn" class="btn accent">Send email</button>
+        <div id="emailMsg" class="muted"></div>
+      </div>
     </div>
 
-    <!-- Print-only container -->
-    <div id="printContainer" class="card">
-      <div id="printRoot"></div>
-    </div>
-
-    <div id="previewModal" class="card no-print" style="display:none;position:fixed;inset:40px;max-width:900px;margin:auto;z-index:20;overflow:auto">
+    <!-- Preview modal -->
+    <div id="previewModal" class="card" style="display:none;position:fixed;inset:40px;max-width:900px;margin:auto;z-index:20;overflow:auto">
       <div class="row" style="align-items:center;margin-bottom:8px">
         <h3 class="title" style="margin:0">Instacart payload preview (mock)</h3>
         <button id="closePreviewBtn" class="btn right">Close</button>
       </div>
-      <pre id="previewJson" class="json"></pre>
+      <pre id="previewJson" style="white-space:pre-wrap;color:var(--ink-2)"></pre>
     </div>
 
-    <!-- Loader -->
-    <div id="loader" class="loader" role="status" aria-label="Loading">
-      <div class="loaderInner">
-        <div class="loaf" aria-hidden="true"></div>
-        <div class="muted">Baking your plan…</div>
-      </div>
-    </div>
-
-    <div class="toast" id="toast"></div>
+    <!-- Hidden print container -->
+    <div id="printContainer" class="no-print" style="display:none"></div>
   </div>
 
   <script src="./app.js"></script>
