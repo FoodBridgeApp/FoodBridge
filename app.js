@@ -121,3 +121,5 @@
   });
   document.getElementById("suggestions")?.addEventListener("click",(e)=>{const b=e.target.closest("button[data-suggest]"); if(!b)return; const name=decodeURIComponent(b.getAttribute("data-suggest")); state.cart.items.push({name,qty:1}); priceCart();});
 })();
+
+// bump 20251023081801
