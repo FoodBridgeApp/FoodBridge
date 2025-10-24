@@ -603,3 +603,69 @@ Page: ${location.href}
 
 
 
+;(() => {
+  try {
+    // 2a) Global fetch timeout wrapper (12s by default)
+    if (!window._fbFetchWrapped) {
+      const _origFetch = window.fetch.bind(window);
+      window.fetch = (input, init={}) => {
+        const timeoutMs = init.timeoutMs ?? 12000;
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), timeoutMs);
+        const signal = init.signal || controller.signal;
+        return _origFetch(input, { ...init, signal })
+          .finally(() => clearTimeout(t));
+      };
+      window._fbFetchWrapped = true;
+      console.log("[FB] fetch wrapped with timeout");
+    }
+
+    // 2b) Server-side email send (no mailto)
+    const API = (window.FB_API_URL || "").replace(/\/$/, "");
+    const btnEmail = document.getElementById("btn-email");
+    if (btnEmail && !btnEmail._fbHooked) {
+      btnEmail._fbHooked = true;
+      btnEmail.addEventListener("click", async (e) => {
+        e.preventDefault();
+        const b = document.createElement("div");
+        b.textContent = "Sending plan…";
+        b.style.cssText = "position:fixed;left:8px;bottom:8px;padding:6px 10px;background:#111;color:#fff;border-radius:8px;z-index:9999;font:14px/1.2 ui-sans-serif,system-ui";
+        document.body.appendChild(b);
+        try {
+          // Build simple plan text from DOM
+          const items = Array.from(document.querySelectorAll("#cart-items li .name"))
+            .map(el => "- " + (el.textContent||"").trim()).join("\n");
+          const total = (document.getElementById("checkout-total")?.textContent || "0.00").trim();
+          const body  = `FoodBridge Plan
+
+Items:
+${items || "(none)"}
+
+Estimated total: $${total}
+
+API: ${API}
+Page: ${location.href}
+`;
+          const res = await fetch(API + "/api/email/plan", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ subject: "FoodBridge Plan", body }),
+            timeoutMs: 15000
+          });
+          const data = await res.json();
+          if (!res.ok || !data?.ok) throw new Error(data?.error || "Send failed");
+          b.textContent = "Plan emailed ✓";
+        } catch (err) {
+          console.error("[FB] email error", err);
+          b.textContent = "Email failed";
+          b.style.background = "#b91c1c";
+        } finally {
+          setTimeout(() => b.remove(), 3000);
+        }
+      });
+      console.log("[FB] email button rewired -> API");
+    }
+  } catch (e) {
+    console.error("[FB] patch error", e);
+  }
+})();
