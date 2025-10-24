@@ -13,5 +13,6 @@ import prices from "./routes/prices";
 app.use("/api/prices", prices);
 
 const port = process.env.PORT || 3001;
-app.listen(port, ()=>console.log(`server on :${port}`));
+app.use("/api/email", emailPlan); app.use("/api/prices", prices); app.listen(port, ()=>console.log(`server on :${port}`));
+
 
