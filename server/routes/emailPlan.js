@@ -1,21 +1,41 @@
 ﻿const express = require("express");
 const { Resend } = require("resend");
-const router = express.Router();
-const resend = new Resend(process.env.RESEND_API_KEY);
 
-router.post("/send", async (req,res)=>{
-  try{
-    const { to, subject, html } = req.body || {};
-    if(!to || !subject || !html) return res.status(400).json({ ok:false, error:"Missing to/subject/html" });
-    const result = await resend.emails.send({
-      from: "FoodBridge <noreply@foodbridge.app>",
-      to: Array.isArray(to) ? to : [to],
-      subject, html
-    });
-    if (result?.error) return res.status(500).json({ ok:false, error: result.error });
-    res.json({ ok:true, id: result?.data?.id });
-  } catch(e){
-    res.status(500).json({ ok:false, error: e?.message || "unknown" });
+const router = express.Router();
+
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+if (!RESEND_API_KEY) {
+  console.warn("[emailPlan] RESEND_API_KEY is not set. /api/email/send will return 500.");
+}
+const resend = new Resend(RESEND_API_KEY);
+
+const DEFAULT_FROM = process.env.RESEND_FROM || "FoodBridge <onboarding@resend.dev>";
+
+router.post("/send", async (req, res) => {
+  try {
+    const { to, subject, html, from, replyTo } = req.body || {};
+    if (!to || !subject || !html) {
+      return res.status(400).json({ ok: false, error: "Missing required fields: to, subject, html" });
+    }
+    const toArr = Array.isArray(to) ? to : [to];
+    const fromAddr = from || DEFAULT_FROM;
+
+    const payload = { from: fromAddr, to: toArr, subject, html };
+    if (replyTo) payload.reply_to = replyTo;
+
+    const result = await resend.emails.send(payload);
+    if (result?.error) {
+      return res.status(502).json({ ok: false, error: result.error.message || "Resend error", details: result.error });
+    }
+    return res.json({ ok: true, id: result?.data?.id || null, info: { from: fromAddr, to: toArr } });
+  } catch (e) {
+    console.error("[emailPlan] send error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "Unknown server error" });
   }
 });
+
+router.get("/health", (_req, res) => {
+  res.json({ ok: true, hasKey: Boolean(RESEND_API_KEY), from: DEFAULT_FROM });
+});
+
 module.exports = router;
