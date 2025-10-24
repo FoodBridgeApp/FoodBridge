@@ -180,3 +180,37 @@
     });
 
 }catch(e){console.error("[FB] debug panel error",e)}})();
+;(function(){
+  if (typeof window.renderRecipeReadout === "function") return;
+  window.renderRecipeReadout = function(kind, recipe){
+    try {
+      var id = function(base){ return (kind === "url" ? ("url" + base) : ("dish" + base)); };
+      var titleEl = document.getElementById(id("Title"));
+      var metaEl  = document.getElementById(id("Meta"));
+      var ingEl   = document.getElementById(id("Ingredients"));
+      var stepsEl = document.getElementById(id("Steps"));
+      if (!titleEl || !metaEl || !ingEl || !stepsEl) return;
+
+      var esc = function(s){ return String(s ?? "").replace(/[&<>"]/g, function(c){
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]);
+      }); };
+
+      var servings = (recipe && (recipe.servings ?? 4));
+      titleEl.textContent = (recipe && recipe.title) || "Recipe";
+      metaEl.textContent  = "Servings: " + servings;
+
+      var ings = (recipe?.ingredients || []).map(function(i){
+        var name = (typeof i === "string") ? i : (i && i.name) || "";
+        return "<li>" + esc(name) + "</li>";
+      }).join("");
+      ingEl.innerHTML = ings;
+
+      var steps = (recipe?.steps || []).map(function(s){
+        return "<li>" + esc(s) + "</li>";
+      }).join("");
+      stepsEl.innerHTML = steps;
+    } catch (e){
+      console.error("[FB] renderRecipeReadout error", e);
+    }
+  };
+})();
