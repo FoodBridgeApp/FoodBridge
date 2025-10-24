@@ -1,35 +1,63 @@
-﻿import express from "express";
-
-import prices from "./server/routes/prices.js";
-import emailPlan from "./server/routes/emailPlan.js";
-import version from "./server/routes/version.js";
+// index.js
+const express = require('express');
+const bodyParser = require('body-parser');
+const fetch = require('node-fetch');
 
 const app = express();
-app.set("trust proxy", 1);
-app.use(express.json({ limit: "1mb" }));
+const PORT = process.env.PORT || 10000;
 
-app.get("/", (_req, res) => {
-  res.type("text/plain").send("FoodBridge server is up");
-});
+app.use(bodyParser.json());
 
-app.get("/health", (_req, res) => {
+// health check
+app.get('/health', (req, res) => {
   res.json({
     ok: true,
     env: {
-      hasResendKey: Boolean(process.env.RESEND_API_KEY),
-      from:
-        process.env.RESEND_FROM ||
-        process.env.EMAIL_FROM ||
-        "FoodBridge <onboarding@resend.dev>",
-    },
+      hasResendKey: !!process.env.RESEND_API_KEY,
+      from: process.env.EMAIL_FROM || null
+    }
   });
 });
 
-app.use("/api/prices",  prices);
-app.use("/api/email",   emailPlan);
-app.use("/api/version", version);
+// email health
+app.get('/api/email/health', (req, res) => {
+  res.json({
+    ok: true,
+    hasKey: !!process.env.RESEND_API_KEY,
+    from: process.env.EMAIL_FROM || null,
+    envChecked: {
+      RESEND_FROM: !!process.env.RESEND_FROM,
+      EMAIL_FROM: !!process.env.EMAIL_FROM
+    }
+  });
+});
 
-const PORT = process.env.PORT || 10000;
+// send email
+app.post('/api/email/send', async (req, res) => {
+  try {
+    if (!process.env.RESEND_API_KEY) {
+      return res.status(401).json({ ok: false, error: 'Missing API key' });
+    }
+
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(req.body)
+    });
+
+    const out = await r.json();
+    if (!r.ok) {
+      return res.status(r.status).json({ ok: false, error: out });
+    }
+    res.json({ ok: true, data: out });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`[server] Listening on port ${PORT}`);
 });
