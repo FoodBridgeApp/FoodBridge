@@ -1,5 +1,137 @@
 ﻿;(() => {
   try {
+    if (window.__fb_cart_patch__) return; window.__fb_cart_patch__ = true;
+
+    // toast helper
+    function toast(msg){
+      try{
+        const t = document.createElement("div");
+        t.textContent = msg;
+        t.style.cssText = "position:fixed;right:8px;bottom:8px;background:#111;color:#fff;padding:8px 12px;border-radius:10px;z-index:9999;font:13px/1.2 ui-sans-serif,system-ui;opacity:.95";
+        document.body.appendChild(t); setTimeout(()=>t.remove(), 4200);
+      }catch(e){}
+    }
+
+    // fetch with 12s timeout
+    if (!window.__fb_fetch_wrapped__) {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (url, opts={}) => {
+        const t = typeof opts.timeout === "number" ? opts.timeout : 12000;
+        const ac = new AbortController();
+        const timer = setTimeout(()=>ac.abort("timeout"), t);
+        const final = {...opts, signal: ac.signal, mode: opts.mode||"cors", credentials: opts.credentials||"omit"};
+        const t0 = Date.now();
+        return nativeFetch(url, final)
+          .finally(()=>clearTimeout(timer))
+          .then(async r => { if (!r.ok) throw new Error("HTTP "+r.status+" "+await r.text().catch(()=>r.statusText)); return r; })
+          .catch(e => { console.error("[FB] fetch fail:", {url, ms: Date.now()-t0, err: String(e&&e.message||e)}); throw e; });
+      };
+      window.__fb_fetch_wrapped__ = true;
+    }
+
+    // local fallback pricing (flat $0.00 so UX keeps moving)
+    function priceCartFallback(state){
+      const items = (state.cart?.items)||[];
+      items.forEach(i => {
+        if (typeof i.unitPrice !== "number") i.unitPrice = 0;
+        if (typeof i.qty !== "number") i.qty = Math.max(1, Number(i.qty)||1);
+        i.lineTotal = Number(i.unitPrice) * Number(i.qty);
+      });
+      state.cart.total = items.reduce((s,i)=>s+(i.lineTotal||0), 0);
+    }
+
+    // patch global priceCart to call server, else fallback
+    (function patchPriceCart(){
+      const s = window.__fb_state__ || window.state || (window.state = {cart:{items:[]}, recipes:[]});
+      const spinner = ()=>document.getElementById("spinner");
+      const api = String(window.FB_API_URL||"");
+
+      async function priceServer(){
+        const res = await fetch(api + "/api/pricing/cart", {
+          method: "POST",
+          headers: {"content-type":"application/json"},
+          body: JSON.stringify({items: s.cart.items}),
+          timeout: 12000
+        }).then(r=>r.json());
+        s.cart.items = res.items || s.cart.items;
+        s.cart.total = typeof res.total === "number" ? res.total :
+                       (s.cart.items||[]).reduce((acc,i)=>acc+((i.lineTotal)||(i.unitPrice||0)*(i.qty||1)),0);
+      }
+
+      const origRenderCart = window.renderCart || function(){};
+      window.renderCart = function(){ try { origRenderCart(); } catch(e){ console.error("[FB] renderCart error", e); } };
+
+      window.priceCart = async function(){
+        try {
+          spinner()?.classList.remove("hidden");
+          try {
+            await priceServer();
+          } catch(e) {
+            console.warn("[FB] pricing failed, using local fallback", e);
+            priceCartFallback(s);
+            toast("Pricing service unavailable — using local prices.");
+          }
+          window.renderCart();
+        } finally {
+          spinner()?.classList.add("hidden");
+        }
+      };
+    })();
+
+    // Email Plan via backend (if configured) else mailto fallback
+    (function patchEmail(){
+      const btn = document.getElementById("btn-email");
+      if (!btn) return;
+      if (btn.__fb_patched) return; btn.__fb_patched = true;
+
+      btn.addEventListener("click", async (ev) => {
+        ev.preventDefault();
+        const s = window.__fb_state__ || window.state || {};
+        const items = (s.cart && s.cart.items) ? s.cart.items : [];
+        const total = (s.cart && s.cart.total) ? s.cart.total : 0;
+        const payload = { items, total, page: location.href, api: String(window.FB_API_URL||"") };
+        const spinner = ()=>document.getElementById("spinner");
+
+        if (window.FB_EMAIL_ENDPOINT) {
+          try {
+            spinner()?.classList.remove("hidden");
+            await fetch(String(window.FB_EMAIL_ENDPOINT), {
+              method: "POST", headers: {"content-type":"application/json"},
+              body: JSON.stringify(payload), timeout: 12000
+            }).then(r=>r.json());
+            toast("Plan emailed ✔");
+            return;
+          } catch(e) {
+            console.warn("[FB] email endpoint failed, falling back to mailto", e);
+          } finally {
+            spinner()?.classList.add("hidden");
+          }
+        }
+
+        // fallback: mailto
+        const summary = items.map(i => `- ${i.name||""}  x${i.qty||1}  $${(i.unitPrice||0).toFixed?.(2) || i.unitPrice || 0}`).join("\n");
+        const body =
+`FoodBridge Plan
+
+Items:
+${summary}
+
+Estimated total: $${(Number(total)||0).toFixed(2)}
+
+API: ${(window.FB_API_URL||"")}
+Page: ${location.href}
+`;
+        location.href = "mailto:?subject=" + encodeURIComponent("FoodBridge Plan") + "&body=" + encodeURIComponent(body);
+      });
+    })();
+
+    // hide spinner on any global error/rejection
+    window.addEventListener("unhandledrejection", ()=>document.getElementById("spinner")?.classList.add("hidden"));
+    window.addEventListener("error", ()=>document.getElementById("spinner")?.classList.add("hidden"));
+  } catch(e){ console.error("[FB] cart/email patch error", e); }
+})();
+;(() => {
+  try {
     if (window.__fb_net_patch__) return; window.__fb_net_patch__ = true;
 
     // --- tiny toast ---
@@ -468,5 +600,6 @@ Page: ${location.href}
     }
   };
 })();
+
 
 
