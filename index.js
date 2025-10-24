@@ -146,4 +146,4 @@ app.get("/api/ingredients/suggest", (req, res) => {
   res.json({ ok: true, suggestions: uniq });
 });
 
-app.listen(PORT, () => console.log("[server] Listening on", PORT));
+app.listen(PORT, () => console.log(`[server] Listening on port ${PORT}`));
