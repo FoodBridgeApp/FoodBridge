@@ -1,4 +1,18 @@
-﻿(() => {
+﻿;(() => { try {
+  console.log("[FB] boot", { API: window.FB_API_URL, PAGES_BASE: window.FB_PAGES_BASE });
+  window.addEventListener("error", e => console.error("[FB] window error:", e.error || e.message || e));
+  window.addEventListener("unhandledrejection", e => console.error("[FB] unhandledrejection:", e.reason || e));
+  document.addEventListener("DOMContentLoaded", () => {
+    try {
+      const b = document.createElement("div");
+      b.textContent = "FoodBridge UI loaded ✓";
+      b.style.cssText = "position:fixed;left:8px;bottom:8px;padding:6px 10px;background:#0ea5e9;color:#fff;border-radius:8px;z-index:9999;font:14px/1.2 ui-sans-serif,system-ui";
+      document.body.appendChild(b);
+      setTimeout(()=>b.remove(), 4500);
+    } catch (e) { console.error("[FB] banner error", e); }
+  });
+} catch(e){ console.error("[FB] early boot error", e); } })();
+(() => {
   const API = (window.FB_API_URL || "").replace(/\/$/, "");
   const $  = (s)=>document.querySelector(s);
   const $$ = (s)=>Array.from(document.querySelectorAll(s));
@@ -123,3 +137,4 @@
 })();
 
 // bump 20251023081801
+
