@@ -1,5 +1,122 @@
 ﻿;(() => {
   try {
+    if (window.__fb_net_patch__) return; window.__fb_net_patch__ = true;
+
+    // --- tiny toast ---
+    function toast(msg){
+      try{
+        const t = document.createElement("div");
+        t.textContent = msg;
+        t.style.cssText = "position:fixed;right:8px;bottom:8px;background:#111;color:#fff;padding:8px 12px;border-radius:10px;z-index:9999;font:13px/1.2 ui-sans-serif,system-ui;opacity:.95";
+        document.body.appendChild(t); setTimeout(()=>t.remove(), 4200);
+      }catch(e){}
+    }
+
+    // --- global fetch with timeout (12s) ---
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (url, opts={}) => {
+      const t = (opts && typeof opts.timeout === "number") ? opts.timeout : 12000;
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort("timeout"), t);
+      const final = {...opts, signal: ac.signal, mode: opts.mode || "cors", credentials: opts.credentials || "omit"};
+      const startedAt = Date.now();
+      return nativeFetch(url, final).finally(() => clearTimeout(timer)).then(async (r) => {
+        // Surface 4xx/5xx as failures so our UI can react
+        if (!r.ok) {
+          const txt = await r.text().catch(()=>String(r.status));
+          const err = new Error("HTTP "+r.status+": "+txt.slice(0,200));
+          err.status = r.status;
+          throw err;
+        }
+        return r;
+      }).catch((e) => {
+        console.error("[FB] fetch fail:", {url, ms: Date.now()-startedAt, err: String(e && e.message || e)});
+        try { document.getElementById("spinner")?.classList.add("hidden"); } catch(_){}
+        toast("Network issue — please try again.");
+        throw e;
+      });
+    };
+
+    // --- safer helpers for buttons so they don't double-trigger ---
+    function guardClick(btn, fn){
+      if (!btn) return;
+      btn.addEventListener("click", async () => {
+        if (btn.__busy) return;
+        btn.__busy = true; btn.disabled = true;
+        try { await fn(); }
+        finally { btn.__busy = false; btn.disabled = false; }
+      });
+    }
+
+    // --- Email Plan: try backend first if configured, else mailto ---
+    // If your backend supports it, expose window.FB_EMAIL_ENDPOINT in config.js like:
+    //   window.FB_EMAIL_ENDPOINT = window.FB_API_URL + "/api/email/plan";
+    (function wireEmail(){
+      const emailBtn = document.getElementById("btn-email");
+      if (!emailBtn) return;
+      guardClick(emailBtn, async () => {
+        const s = window.__fb_state__ || window.state || {};
+        const items = (s.cart && s.cart.items) ? s.cart.items : [];
+        const summary = items.map(i => `- ${i.name || ""}  x${i.qty || 1}  $${(i.unitPrice||0).toFixed?.(2) || i.unitPrice || 0}`).join("\n");
+        const total = (s.cart && s.cart.total) ? s.cart.total : 0;
+        const payload = { items, total, page: location.href, api: String(window.FB_API_URL||"") };
+
+        if (window.FB_EMAIL_ENDPOINT) {
+          try {
+            document.getElementById("spinner")?.classList.remove("hidden");
+            await fetch(String(window.FB_EMAIL_ENDPOINT), {
+              method: "POST",
+              headers: {"content-type":"application/json"},
+              body: JSON.stringify(payload),
+              timeout: 12000
+            }).then(r=>r.json());
+            toast("Plan emailed ✔");
+            return;
+          } catch(e) {
+            console.warn("[FB] email endpoint failed, falling back to mailto", e);
+          } finally {
+            document.getElementById("spinner")?.classList.add("hidden");
+          }
+        }
+        const body =
+`FoodBridge Plan
+
+Items:
+${summary}
+
+Estimated total: $${(Number(total)||0).toFixed(2)}
+
+API: ${(window.FB_API_URL||"")}
+Page: ${location.href}
+`;
+        location.href = "mailto:?subject=" + encodeURIComponent("FoodBridge Plan") + "&body=" + encodeURIComponent(body);
+      });
+    })();
+
+    // --- Ensure spinner always hides after rejected promise chains ---
+    window.addEventListener("unhandledrejection", () => {
+      try { document.getElementById("spinner")?.classList.add("hidden"); } catch(_){}
+    });
+    window.addEventListener("error", () => {
+      try { document.getElementById("spinner")?.classList.add("hidden"); } catch(_){}
+    });
+
+    // --- Debounced suggest (prevents rapid-fire requests) ---
+    const btnSuggest = document.getElementById("btn-suggest");
+    if (btnSuggest) {
+      let t = 0;
+      btnSuggest.addEventListener("click", () => {
+        clearTimeout(t);
+        t = setTimeout(() => {
+          // let existing app.js handler run, but our fetch wrapper/guards handle failures
+        }, 150);
+      }, {capture: true}); // capture so debounce occurs before original handler
+    }
+
+  } catch(e) { console.error("[FB] net/ux patch error", e); }
+})();
+;(() => {
+  try {
     // guard so we don't re-attach twice
     if (window.__fb_patch_applied__) return; 
     window.__fb_patch_applied__ = true;
@@ -351,4 +468,5 @@ Page: ${location.href}
     }
   };
 })();
+
 
