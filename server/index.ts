@@ -1,4 +1,5 @@
-﻿import express from "express";
+﻿import version from "./routes/version";
+import express from "express";
 import bodyParser from "body-parser";
 const app = express();
 app.use(express.json());
@@ -13,6 +14,7 @@ import prices from "./routes/prices";
 app.use("/api/prices", prices);
 
 const port = process.env.PORT || 3001;
-app.use("/api/email", emailPlan); app.use("/api/prices", prices); app.listen(port, ()=>console.log(`server on :${port}`));
+app.use("/api/email", emailPlan); app.use("/api/prices", prices); app.use("/api/version", version); app.listen(port, ()=>console.log(`server on :${port}`));
+
 
 
