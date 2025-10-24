@@ -1,10 +1,15 @@
-﻿const express = require("express");
+﻿import express from "express";
 const router = express.Router();
 
 const BASE = { milk:2.99, egg:3.49, chicken_breast_lb:3.99, onion:0.69, garlic:0.50, olive_oil_tbsp:0.20 };
 const REGION_MULT = { LA:1.08, SF:1.18, PHX:0.96, NYC:1.22, OTHER:1.00 };
 
-function regionFromIp(ip){ if(!ip) return "OTHER"; if(ip.startsWith("104.")||ip.startsWith("47.")) return "LA"; return "OTHER"; }
+function regionFromIp(ip){
+  if(!ip) return "OTHER";
+  if(ip.startsWith("104.") || ip.startsWith("47.")) return "LA";
+  return "OTHER";
+}
+
 function estimatePrice(name, qty=1){
   const n = String(name||"").toLowerCase();
   const key = n.includes("chicken") ? "chicken_breast_lb" :
@@ -28,4 +33,4 @@ router.post("/estimate", (req,res)=>{
   res.json({ ok:true, region, items: priced, subtotal: +priced.reduce((a,b)=>a+(b.price||0),0).toFixed(2) });
 });
 
-module.exports = router;
+export default router;
