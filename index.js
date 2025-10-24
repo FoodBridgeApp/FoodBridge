@@ -11,87 +11,82 @@ const app = express();
 app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
 app.use(bodyParser.json({ limit: "2mb" }));
 
-// In-memory plans with TTL
+// ===== In-memory plans (48h TTL) =====
 const TTL_MS = 1000 * 60 * 60 * 24 * 2;
 const plans = new Map();
-const nowMs = () => Date.now();
-function newPlan() { const id = crypto.randomUUID(); const t = nowMs(); plans.set(id, { recipes: [], createdAt: t, ttlAt: t + TTL_MS }); return id; }
-function getPlan(id) { const p = plans.get(id); if (!p) return null; if (nowMs() > p.ttlAt) { plans.delete(id); return null; } return p; }
-setInterval(() => { const n = nowMs(); for (const [id, p] of plans.entries()) if (n > p.ttlAt) plans.delete(id); }, 60_000);
+const now = () => Date.now();
+function newPlan(){ const id = crypto.randomUUID(); const t = now(); plans.set(id,{recipes:[],createdAt:t,ttlAt:t+TTL_MS}); return id; }
+function getPlan(id){ const p = plans.get(id); if(!p) return null; if(now()>p.ttlAt){ plans.delete(id); return null; } return p; }
+setInterval(()=>{ const t=now(); for(const [id,p] of plans) if(t>p.ttlAt) plans.delete(id); }, 60_000);
 
-// LLM normalize (fallback when no key)
-async function llmNormalizeRecipe({ text }) {
-  const prompt = `
-You are a culinary parser. Extract a recipe in JSON with keys:
-- title (string)
-- ingredients (array of { name, quantity, unit })
-- steps (array of strings)
-
-Text:
-${text}`.trim();
-
-  if (!OPENAI_API_KEY) {
-    return { title: "Untitled Recipe", ingredients: [{ name: "ingredient", quantity: 1, unit: "unit" }], steps: ["Mix things", "Cook until done"] };
+// ===== LLM normalize (fallback if no key) =====
+async function llmNormalizeRecipe({ text }){
+  if(!OPENAI_API_KEY){
+    return { title:"Untitled Recipe", ingredients:[{name:"ingredient",quantity:1,unit:"unit"}], steps:["Mix","Cook"] };
   }
-
-  const body = { model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } };
+  const prompt = `You are a culinary parser. Extract JSON: {title, ingredients[{name,quantity,unit}], steps[]}.\n\nText:\n${text}`;
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
+    method:"POST",
+    headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
+    body: JSON.stringify({ model:"gpt-4o-mini", messages:[{role:"user",content:prompt}], response_format:{type:"json_object"} })
   });
-  const json = await resp.json();
-  let parsed; try { parsed = JSON.parse(json.choices?.[0]?.message?.content || "{}"); } catch { parsed = {}; }
-  return { title: parsed.title || "Untitled Recipe", ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : [], steps: Array.isArray(parsed.steps) ? parsed.steps : [] };
+  const data = await resp.json();
+  let parsed={}; try{ parsed = JSON.parse(data.choices?.[0]?.message?.content || "{}"); }catch{}
+  return {
+    title: parsed.title || "Untitled Recipe",
+    ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : [],
+    steps: Array.isArray(parsed.steps) ? parsed.steps : [],
+  };
 }
 
-// Mock pricing
-function mockPrice(name) { const h = crypto.createHash("md5").update((name||"").toLowerCase()).digest("hex"); const n = parseInt(h.slice(0,6),16)%700; return Number((0.99 + n/100).toFixed(2)); }
-function priceIngredients(ingredients) { return (ingredients||[]).map(i => ({ ...i, price: mockPrice(i.name||"item") })); }
+// ===== Pricing =====
+function price(name){ const h=crypto.createHash("md5").update((name||"").toLowerCase()).digest("hex"); const n=parseInt(h.slice(0,6),16)%700; return Number((0.99+n/100).toFixed(2)); }
+const addPrices = (ings=[]) => ings.map(i=>({ ...i, price: price(i.name) }));
 
-// Version/health
-app.get("/version", (_, res) => res.json({ ok: true, app: "foodbridge", routes: ["api/plan","api/ingest/free-text","p/:id"], port: PORT }));
-app.get("/api/health", (_, res) => res.json({ ok: true }));
+// ===== Health / Version =====
+app.get("/api/health", (_,res)=>res.json({ ok:true }));
+app.get("/version", (_,res)=>res.json({ ok:true, app:"foodbridge", port:PORT }));
 
-// Core plan routes
-app.post("/api/plan", (req, res) => {
+// ===== Core plan API =====
+app.post("/api/plan", (req,res)=>{
   const id = newPlan();
-  res.json({ planId: id, shareUrl: `${req.protocol}://${req.get("host")}/p/${id}` });
+  res.json({ planId:id, shareUrl:`${req.protocol}://${req.get("host")}/p/${id}` });
 });
-app.get("/api/plan/:id", (req, res) => {
+app.get("/api/plan/:id", (req,res)=>{
   const plan = getPlan(req.params.id);
-  if (!plan) return res.status(404).json({ error: "Plan not found/expired" });
+  if(!plan) return res.status(404).json({ error:"Plan not found/expired" });
   res.json(plan);
 });
-app.post("/api/plan/:id/recipes/text", async (req, res) => {
-  const plan = getPlan(req.params.id); if (!plan) return res.status(404).json({ error: "Plan not found/expired" });
-  const { text } = req.body || {}; if (!text) return res.status(400).json({ error: "text required" });
-  const normalized = await llmNormalizeRecipe({ text }); const priced = priceIngredients(normalized.ingredients);
-  plan.recipes.push({ ...normalized, ingredients: priced }); plan.ttlAt = nowMs() + TTL_MS; res.json({ ok: true, plan });
+app.post("/api/plan/:id/recipes/text", async (req,res)=>{
+  const plan = getPlan(req.params.id); if(!plan) return res.status(404).json({ error:"Plan not found/expired" });
+  const { text } = req.body || {}; if(!text) return res.status(400).json({ error:"text required" });
+  const norm = await llmNormalizeRecipe({ text });
+  plan.recipes.push({ ...norm, ingredients: addPrices(norm.ingredients) });
+  plan.ttlAt = now()+TTL_MS;
+  res.json({ ok:true, plan });
 });
 
-// Minimal URL + corpus routes kept out for brevity (add back if you use them)
-
-// Printable page
-app.get("/p/:id", (req, res) => {
-  const plan = getPlan(req.params.id); if (!plan) return res.status(404).send("Plan not found/expired");
-  const total = plan.recipes.flatMap(r => r.ingredients||[]).reduce((s,i)=>s+(Number(i.price)||0),0);
+// ===== Printable page =====
+app.get("/p/:id", (req,res)=>{
+  const plan = getPlan(req.params.id); if(!plan) return res.status(404).send("Plan not found/expired");
+  const total = plan.recipes.flatMap(r=>r.ingredients||[]).reduce((s,i)=>s+(Number(i.price)||0),0);
   const html = `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>FoodBridge Plan</title>
 <style>body{font-family:system-ui,Arial,sans-serif;max-width:840px;margin:24px auto;padding:0 12px}.card{border:1px solid #eee;border-radius:12px;padding:16px;margin:12px 0;box-shadow:0 2px 6px rgba(0,0,0,.05)}.price{float:right}.header{display:flex;align-items:center;gap:10px}.baguette{font-size:28px;animation:spin 1.2s linear infinite}@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}.total{font-weight:700;font-size:18px;margin-top:16px}.actions{margin:16px 0}button{padding:8px 12px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer}@media print {.actions{display:none}}</style>
 <div class="header"><div class="baguette">🥖</div><h2>FoodBridge Plan</h2></div>
 <div class="actions"><button onclick="window.print()">Print</button></div>
-${plan.recipes.map(r => `<div class="card"><h3>${r.title}</h3><strong>Ingredients</strong><ul>${(r.ingredients||[]).map(i => `<li>${i.quantity??""} ${i.unit??""} ${i.name} <span class="price">$${(i.price??0).toFixed(2)}</span></li>`).join("")}</ul><strong>Steps</strong><ol>${(r.steps||[]).map(s => `<li>${s}</li>`).join("")}</ol></div>`).join("")}
+${plan.recipes.map(r=>`<div class="card"><h3>${r.title}</h3><strong>Ingredients</strong><ul>${(r.ingredients||[]).map(i=>`<li>${i.quantity??""} ${i.unit??""} ${i.name} <span class="price">$${(i.price??0).toFixed(2)}</span></li>`).join("")}</ul><strong>Steps</strong><ol>${(r.steps||[]).map(s=>`<li>${s}</li>`).join("")}</ol></div>`).join("")}
 <div class="total">Estimated Total: $${total.toFixed(2)}</div>`;
   res.send(html);
 });
 
-// Compatibility for current frontend
-app.get("/health", (_, res) => res.json({ ok: true })); // legacy
-app.post("/api/ingest/free-text", async (req, res) => {
-  const { text } = req.body || {}; if (!text) return res.status(400).json({ error: "text required" });
-  const planId = newPlan(); const plan = getPlan(planId);
-  const normalized = await llmNormalizeRecipe({ text }); plan.recipes.push({ ...normalized, ingredients: priceIngredients(normalized.ingredients) });
-  res.json({ ok: true, planId, shareUrl: `${req.protocol}://${req.get("host")}/p/${planId}`, plan });
+// ===== Legacy compat for your current frontend =====
+app.get("/health", (_,res)=>res.json({ ok:true }));
+app.post("/api/ingest/free-text", async (req,res)=>{
+  const { text } = req.body || {}; if(!text) return res.status(400).json({ error:"text required" });
+  const id = newPlan(); const plan = getPlan(id);
+  const norm = await llmNormalizeRecipe({ text });
+  plan.recipes.push({ ...norm, ingredients: addPrices(norm.ingredients) });
+  res.json({ ok:true, planId:id, shareUrl:`${req.protocol}://${req.get("host")}/p/${id}`, plan });
 });
 
 app.listen(PORT, () => console.log(`[server] Listening on port ${PORT}`));
