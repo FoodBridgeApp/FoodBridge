@@ -138,3 +138,45 @@
 
 // bump 20251023081801
 
+
+;(()=>{try{
+  const box = document.createElement("div");
+  box.id="fb-debug";
+  box.style.cssText="position:fixed;right:8px;bottom:8px;max-width:380px;background:#111;color:#fff;padding:10px 12px;border-radius:10px;z-index:99999;font:12px/1.35 ui-sans-serif,system-ui";
+  box.innerHTML = `
+    <div style="font-weight:700;margin-bottom:6px">FoodBridge Debug</div>
+    <div>API: <code>${window.FB_API_URL||"(undefined)"}</code></div>
+    <div>PAGES_BASE: <code>${window.FB_PAGES_BASE||"(undefined)"}</code></div>
+    <div id="fb-ping" style="margin-top:6px">Ping: <em>…</em></div>
+    <div id="fb-suggest" style="margin-top:6px">Suggest(tomato): <em>…</em></div>
+  `;
+  document.addEventListener("DOMContentLoaded", ()=>document.body.appendChild(box));
+
+  // Log all errors to console
+  window.addEventListener("error", e => console.error("[FB] window error:", e.error||e.message||e));
+  window.addEventListener("unhandledrejection", e => console.error("[FB] unhandledrejection:", e.reason||e));
+
+  // Ping /api/health (or mark N/A)
+  const pingEl = ()=>document.getElementById("fb-ping");
+  fetch((window.FB_API_URL||"")+"/api/health",{credentials:"include"})
+    .then(r=>r.json()).then(j=>{
+      if(pingEl()) pingEl().innerHTML="Ping: <span style='color:#34d399'>OK</span> " + JSON.stringify(j);
+      console.log("[FB] health:", j);
+    }).catch(err=>{
+      if(pingEl()) pingEl().innerHTML="Ping: <span style='color:#f87171'>FAIL</span> " + (err && err.message || err);
+      console.error("[FB] health error:", err);
+    });
+
+  // Try ingredients/suggest to prove CORS and JSON flows
+  const sEl = ()=>document.getElementById("fb-suggest");
+  fetch((window.FB_API_URL||"")+"/api/ingredients/suggest?q=tomato",{credentials:"include"})
+    .then(r=>r.json()).then(j=>{
+      const names=(j.suggestions||[]).map(x=>x.name).slice(0,5).join(", ") || "(none)";
+      if(sEl()) sEl().innerHTML="Suggest(tomato): <span style='color:#34d399'>OK</span> ["+names+"]";
+      console.log("[FB] suggest:", j);
+    }).catch(err=>{
+      if(sEl()) sEl().innerHTML="Suggest(tomato): <span style='color:#f87171'>FAIL</span> " + (err && err.message || err);
+      console.error("[FB] suggest error:", err);
+    });
+
+}catch(e){console.error("[FB] debug panel error",e)}})();
