@@ -1,4 +1,107 @@
-﻿;(() => { try {
+﻿;(() => {
+  try {
+    // guard so we don't re-attach twice
+    if (window.__fb_patch_applied__) return; 
+    window.__fb_patch_applied__ = true;
+
+    // ----- Tiny toast -----
+    function toast(msg){
+      try{
+        const t = document.createElement("div");
+        t.textContent = msg;
+        t.style.cssText = "position:fixed;right:8px;bottom:8px;background:#111;color:#fff;padding:8px 12px;border-radius:10px;z-index:9999;font:13px/1.2 ui-sans-serif,system-ui;opacity:.95";
+        document.body.appendChild(t);
+        setTimeout(()=>t.remove(), 3500);
+      }catch(e){}
+    }
+
+    // ----- Cart persistence -----
+    const CART_KEY = "fb.cart.v1";
+    // load once, then save on changes (we piggyback renderCart and priceCart)
+    const saveCart = () => {
+      try {
+        const s = window.__fb_state__ || window.state; // prefer a ref if present
+        const cart = (s && s.cart) ? { items: s.cart.items || [], total: s.cart.total || 0 } : null;
+        if (cart) localStorage.setItem(CART_KEY, JSON.stringify(cart));
+      } catch(e){}
+    };
+    const loadCart = () => {
+      try { return JSON.parse(localStorage.getItem(CART_KEY) || "null"); } catch(e){ return null; }
+    };
+
+    // Try to detect/track state object from app.js
+    // If your app already uses "state", expose a ref so we can use it here.
+    if (window.state && !window.__fb_state__) window.__fb_state__ = window.state;
+
+    // Patch renderCart to also persist
+    const _renderCart = window.renderCart;
+    if (typeof _renderCart === "function") {
+      window.renderCart = function(){
+        try { _renderCart.apply(this, arguments); } finally { saveCart(); }
+      };
+    }
+
+    // On boot (DOMContentLoaded) restore cart once, then re-price
+    document.addEventListener("DOMContentLoaded", () => {
+      // Set API label if that element exists
+      try {
+        const apiBaseEl = document.getElementById("apiBase");
+        if (apiBaseEl && window.FB_API_URL) apiBaseEl.textContent = String(window.FB_API_URL).replace(/\/$/, "");
+      } catch(e){}
+
+      const s = window.__fb_state__ || window.state;
+      const cached = loadCart();
+      if (s && s.cart && cached && Array.isArray(cached.items) && cached.items.length) {
+        s.cart.items = cached.items;
+        s.cart.total = cached.total || 0;
+        try {
+          if (typeof window.renderCart === "function") window.renderCart();
+          // If your app has priceCart, call it to re-price from server
+          if (typeof window.priceCart === "function") window.priceCart();
+        } catch(e){}
+      }
+    });
+
+    // ----- Print Plan -----
+    const printBtn = document.getElementById("btn-print");
+    if (printBtn) {
+      printBtn.addEventListener("click", () => {
+        try { window.print(); } catch(e){ console.error(e); toast("Unable to open print dialog."); }
+      });
+    }
+
+    // ----- Email Plan (mailto fallback) -----
+    const emailBtn = document.getElementById("btn-email");
+    if (emailBtn) {
+      emailBtn.addEventListener("click", () => {
+        try {
+          const s = window.__fb_state__ || window.state || {};
+          const items = (s.cart && s.cart.items) ? s.cart.items : [];
+          const lines = items.map(i => `- ${i.name || ""}  x${i.qty || 1}  $${(i.unitPrice||0).toFixed?.(2) || i.unitPrice || 0}`);
+          const total = (s.cart && s.cart.total) ? s.cart.total : 0;
+          const body =
+`FoodBridge Plan
+
+Items:
+${lines.join("\r\n")}
+
+Estimated total: $${(Number(total)||0).toFixed(2)}
+
+API: ${(window.FB_API_URL||"").toString()}
+Page: ${location.href}
+`;
+          const mailto = "mailto:?subject=" + encodeURIComponent("FoodBridge Plan") + "&body=" + encodeURIComponent(body);
+          location.href = mailto;
+        } catch(e){ console.error(e); toast("Couldn’t open email."); }
+      });
+    }
+
+    // ----- Global error hooks -> console + toast -----
+    window.addEventListener("error", e => { console.error("[FB] window error:", e.error || e.message || e); toast("Error: " + (e.message || "See console")); });
+    window.addEventListener("unhandledrejection", e => { console.error("[FB] unhandledrejection:", e.reason || e); toast("Error: " + (e.reason?.message || "See console")); });
+  } catch(e) { console.error("[FB] feature pack error", e); }
+})();
+;(() => { try {
   console.log("[FB] boot", { API: window.FB_API_URL, PAGES_BASE: window.FB_PAGES_BASE });
   window.addEventListener("error", e => console.error("[FB] window error:", e.error || e.message || e));
   window.addEventListener("unhandledrejection", e => console.error("[FB] unhandledrejection:", e.reason || e));
@@ -248,3 +351,4 @@
     }
   };
 })();
+
