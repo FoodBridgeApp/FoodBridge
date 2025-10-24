@@ -1,1 +1,12 @@
-﻿
+﻿services:
+  - type: web
+    name: foodbridge-server
+    env: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 10000
