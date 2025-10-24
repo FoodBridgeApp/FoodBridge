@@ -9,7 +9,17 @@
   <link rel="stylesheet" href="./styles.css?v=1761282097">
   <script defer src="./config.js?v=1761282097"></script>
   <script defer src="./fb.js?v=20251024000819"></script>
-</head>
+<script>window.FB_TS='20251024001605';</script><!-- ts:20251024001605 --><script>
+(()=>{try{
+  const OLD = "https://<your-render-subdomain>.onrender.com";
+  const NEW = "https://foodbridge-server-rv0a.onrender.com";
+  const ofetch = window.fetch ? window.fetch.bind(window) : null;
+  if(ofetch){
+    window.fetch = (u, opts) => ofetch(typeof u==="string" ? u.replace(OLD, NEW) : u, opts);
+    console.log("[FB] proxy armed", NEW);
+  }
+}catch(e){console.warn("[FB] proxy inject fail", e);}})();
+</script></head>
 <body>
 <div style="position:sticky;top:0;z-index:9999;background:#111;color:#fff;padding:10px 14px;font-family:system-ui,Arial">
   Deployed NEW BUILD 20251023081801 — if you still see the old page, hard refresh (Ctrl+F5).
@@ -121,6 +131,9 @@
   <footer class="footer">© 2025 FoodBridge</footer>
 </body>
 </html>
+
+
+
 
 
 
