@@ -9,19 +9,28 @@ if (!RESEND_API_KEY) {
 }
 const resend = new Resend(RESEND_API_KEY);
 
-const DEFAULT_FROM = process.env.RESEND_FROM || "FoodBridge <onboarding@resend.dev>";
+const DEFAULT_FROM =
+  process.env.RESEND_FROM ||
+  process.env.EMAIL_FROM ||
+  "FoodBridge <onboarding@resend.dev>";
 
 router.post("/send", async (req, res) => {
   try {
-    const { to, subject, html, from, replyTo } = req.body || {};
+    if (!RESEND_API_KEY) {
+      return res.status(500).json({ ok: false, error: "Server missing RESEND_API_KEY" });
+    }
+
+    const { to, subject, html, from, replyTo, text } = req.body || {};
     if (!to || !subject || !html) {
       return res.status(400).json({ ok: false, error: "Missing required fields: to, subject, html" });
     }
+
     const toArr = Array.isArray(to) ? to : [to];
     const fromAddr = from || DEFAULT_FROM;
 
     const payload = { from: fromAddr, to: toArr, subject, html };
     if (replyTo) payload.reply_to = replyTo;
+    if (text) payload.text = text;
 
     const result = await resend.emails.send(payload);
     if (result?.error) {
@@ -35,7 +44,15 @@ router.post("/send", async (req, res) => {
 });
 
 router.get("/health", (_req, res) => {
-  res.json({ ok: true, hasKey: Boolean(RESEND_API_KEY), from: DEFAULT_FROM });
+  res.json({
+    ok: true,
+    hasKey: Boolean(RESEND_API_KEY),
+    from: DEFAULT_FROM,
+    envChecked: {
+      RESEND_FROM: Boolean(process.env.RESEND_FROM),
+      EMAIL_FROM: Boolean(process.env.EMAIL_FROM),
+    },
+  });
 });
 
 module.exports = router;
