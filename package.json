@@ -11,5 +11,8 @@
                          "dotenv":  "^16.6.1",
                          "express":  "^4.19.2",
                          "nodemailer":  "^7.0.10"
-                     }
+                     },
+    "engines":  {
+                    "node":  "\u003e=18"
+                }
 }
