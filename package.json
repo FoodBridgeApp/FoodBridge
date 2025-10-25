@@ -1,17 +1,15 @@
-{
-  "name": "foodbridge-server",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "body-parser": "^1.20.3",
-    "cors": "^2.8.5",
-    "express": "^4.21.2",
-    "node-fetch": "^3.3.2",
-    "resend": "^6.2.2"
-  }
+﻿{
+    "name":  "foodbridge-server",
+    "version":  "1.0.0",
+    "private":  true,
+    "description":  "FoodBridge backend",
+    "main":  "index.js",
+    "scripts":  {
+                    "start":  "node index.js"
+                },
+    "dependencies":  {
+                         "dotenv":  "^16.6.1",
+                         "express":  "^4.19.2",
+                         "nodemailer":  "^7.0.10"
+                     }
 }

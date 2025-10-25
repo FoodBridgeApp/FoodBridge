@@ -1,11 +1,10 @@
-﻿import express from "express";
-const router = express.Router();
+﻿import { Router } from "express";
+const router = Router();
 
-const VERSION = {
-  ok: true,
-  service: "FoodBridge",
-};
-
-router.get("/", (_req,res) => res.json(VERSION));
+router.get("/", (_req, res) => {
+  res.json({ ok: true, service: "FoodBridge" });
+});
 
 export default router;
+
+module.exports = router;
