@@ -1,7 +1,7 @@
 {
   "name": "foodbridge-server",
   "version": "1.0.0",
-  "description": "FoodBridge backend server with Gmail SMTP mailer",
+  "description": "FoodBridge backend server with Gmail SMTP + AI ingest pipeline",
   "main": "index.js",
   "type": "module",
   "engines": {
@@ -9,26 +9,18 @@
   },
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "lint": "eslint ."
+    "dev": "nodemon index.js"
   },
-  "keywords": [
-    "foodbridge",
-    "express",
-    "smtp",
-    "nodemailer",
-    "gmail"
-  ],
-  "author": "FoodBridge Team",
-  "license": "MIT",
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "nodemailer": "^6.9.13"
+    "nodemailer": "^6.9.13",
+    "openai": "^4.0.0"
   },
   "devDependencies": {
-    "eslint": "^9.9.0",
     "nodemon": "^3.1.0"
-  }
+  },
+  "author": "FoodBridge Team",
+  "license": "MIT"
 }
