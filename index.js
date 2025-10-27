@@ -5,16 +5,18 @@ import { verifySmtp, sendMail } from './lib/mailer.js';
 import { analyzeText } from './lib/ingest.js';
 
 const app = express();
+
+// Allow your GitHub Pages site to call the API
 const allowOrigin = process.env.FRONTEND_ORIGIN || '*';
 app.use(cors({ origin: allowOrigin }));
 app.use(express.json());
 
-/* Health */
+/* ---------- API: Health ---------- */
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
-/* SMTP Debug */
+/* ---------- API: SMTP Debug ---------- */
 app.get('/api/debug/smtp', async (_req, res) => {
   try {
     await verifySmtp();
@@ -24,11 +26,11 @@ app.get('/api/debug/smtp', async (_req, res) => {
   }
 });
 
-/* Send Mail */
+/* ---------- API: Send Mail ---------- */
 app.post('/api/mail/send', async (req, res) => {
   try {
     const { to, subject, text, html } = req.body || {};
-    if (!to || !subject) return res.status(400).json({ ok: false, error: 'Missing fields' });
+    if (!to || !subject) return res.status(400).json({ ok: false, error: 'Missing "to" or "subject".' });
     const info = await sendMail({ to, subject, text, html });
     res.json({ ok: true, messageId: info.messageId });
   } catch (e) {
@@ -36,11 +38,11 @@ app.post('/api/mail/send', async (req, res) => {
   }
 });
 
-/* AI Recipe Ingest */
+/* ---------- API: Ingest (OpenAI LLM -> structured recipe) ---------- */
 app.post('/api/ingest/free-text', async (req, res) => {
   try {
     const { text } = req.body || {};
-    if (!text) return res.status(400).json({ ok: false, error: 'Missing "text"' });
+    if (!text) return res.status(400).json({ ok: false, error: 'Missing "text".' });
 
     const recipe = await analyzeText(text);
     res.json({ ok: true, recipe });
@@ -49,7 +51,7 @@ app.post('/api/ingest/free-text', async (req, res) => {
   }
 });
 
-/* Catch-all for unknown API */
+/* ---------- 404 for /api/* ---------- */
 app.use('/api', (_req, res) => {
   res.status(404).json({ ok: false, error: 'API route not found' });
 });
