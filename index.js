@@ -1,76 +1,56 @@
 // index.js
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
-import fetch from "node-fetch";
-import "dotenv/config";
+import { sendMail } from "./lib/mailer.js";
 
 const app = express();
-const PORT = process.env.PORT || 10000;
 
-app.use(cors());
+// CORS: allow your GitHub Pages origin or default to *
+const allowOrigin = process.env.FRONTEND_ORIGIN || "*";
+app.use(cors({ origin: allowOrigin }));
 app.use(bodyParser.json());
 
-// 1. Health check
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, message: "FoodBridge API healthy" });
+// --- Health check ---
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, service: "FoodBridge API", ts: new Date().toISOString() });
 });
 
-// 2. Free-text recipe ingestion via OpenAI
-app.post("/api/ingest/free-text", async (req, res) => {
+// --- Email send (alias path used by your current frontend) ---
+app.post("/api/email/send", async (req, res) => {
   try {
-    const { text, diet } = req.body;
-
-    if (!text) {
-      return res.status(400).json({ error: "Missing text" });
+    const { to, subject, text, html } = req.body || {};
+    if (!to || !subject) {
+      return res.status(400).json({ ok: false, error: 'Missing "to" or "subject".' });
     }
-
-    const prompt = `
-      Generate a recipe based on this dish: "${text}".
-      Diet restriction: ${diet || "None"}.
-      Provide JSON with fields: {title, meta, ingredients[], steps[]}.
-    `;
-
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" }
-      })
-    });
-
-    const data = await response.json();
-    let recipe;
-
-    try {
-      recipe = JSON.parse(data.choices[0].message.content);
-    } catch (e) {
-      return res.status(500).json({ error: "Bad JSON from LLM", raw: data });
-    }
-
-    res.json(recipe);
+    const info = await sendMail({ to, subject, text, html });
+    res.json({ ok: true, messageId: info.messageId });
   } catch (err) {
-    console.error("Error ingest free-text:", err);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ ok: false, error: String(err) });
   }
 });
 
-// 3. Placeholder for URL ingest (expand later)
-app.post("/api/ingest/url", (req, res) => {
-  res.json({ title: "Imported URL Recipe (stub)", ingredients: [], steps: [] });
+// (Optional) canonical path if you want to migrate the frontend later
+app.post("/api/mail/send", async (req, res) => {
+  try {
+    const { to, subject, text, html } = req.body || {};
+    if (!to || !subject) {
+      return res.status(400).json({ ok: false, error: 'Missing "to" or "subject".' });
+    }
+    const info = await sendMail({ to, subject, text, html });
+    res.json({ ok: true, messageId: info.messageId });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
 });
 
-// 4. Placeholder for audio ingest (expand later)
-app.post("/api/ingest/audio", (req, res) => {
-  res.json({ title: "Transcribed Audio Recipe (stub)", ingredients: [], steps: [] });
+// --- 404 for unknown /api paths ---
+app.use("/api", (_req, res) => {
+  res.status(404).json({ ok: false, error: "API route not found" });
 });
 
-// Start server
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`FoodBridge server listening on port ${PORT}`);
 });
