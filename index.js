@@ -1,60 +1,76 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import { verifySmtp, sendMail } from './lib/mailer.js';
-import { analyzeText } from './lib/ingest.js';
+// index.js
+import express from "express";
+import cors from "cors";
+import bodyParser from "body-parser";
+import fetch from "node-fetch";
+import "dotenv/config";
 
 const app = express();
+const PORT = process.env.PORT || 10000;
 
-// Allow your GitHub Pages site to call the API
-const allowOrigin = process.env.FRONTEND_ORIGIN || '*';
-app.use(cors({ origin: allowOrigin }));
-app.use(express.json());
+app.use(cors());
+app.use(bodyParser.json());
 
-/* ---------- API: Health ---------- */
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, ts: new Date().toISOString() });
+// 1. Health check
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, message: "FoodBridge API healthy" });
 });
 
-/* ---------- API: SMTP Debug ---------- */
-app.get('/api/debug/smtp', async (_req, res) => {
+// 2. Free-text recipe ingestion via OpenAI
+app.post("/api/ingest/free-text", async (req, res) => {
   try {
-    await verifySmtp();
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
+    const { text, diet } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: "Missing text" });
+    }
+
+    const prompt = `
+      Generate a recipe based on this dish: "${text}".
+      Diet restriction: ${diet || "None"}.
+      Provide JSON with fields: {title, meta, ingredients[], steps[]}.
+    `;
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" }
+      })
+    });
+
+    const data = await response.json();
+    let recipe;
+
+    try {
+      recipe = JSON.parse(data.choices[0].message.content);
+    } catch (e) {
+      return res.status(500).json({ error: "Bad JSON from LLM", raw: data });
+    }
+
+    res.json(recipe);
+  } catch (err) {
+    console.error("Error ingest free-text:", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-/* ---------- API: Send Mail ---------- */
-app.post('/api/mail/send', async (req, res) => {
-  try {
-    const { to, subject, text, html } = req.body || {};
-    if (!to || !subject) return res.status(400).json({ ok: false, error: 'Missing "to" or "subject".' });
-    const info = await sendMail({ to, subject, text, html });
-    res.json({ ok: true, messageId: info.messageId });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
-  }
+// 3. Placeholder for URL ingest (expand later)
+app.post("/api/ingest/url", (req, res) => {
+  res.json({ title: "Imported URL Recipe (stub)", ingredients: [], steps: [] });
 });
 
-/* ---------- API: Ingest (OpenAI LLM -> structured recipe) ---------- */
-app.post('/api/ingest/free-text', async (req, res) => {
-  try {
-    const { text } = req.body || {};
-    if (!text) return res.status(400).json({ ok: false, error: 'Missing "text".' });
-
-    const recipe = await analyzeText(text);
-    res.json({ ok: true, recipe });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
-  }
+// 4. Placeholder for audio ingest (expand later)
+app.post("/api/ingest/audio", (req, res) => {
+  res.json({ title: "Transcribed Audio Recipe (stub)", ingredients: [], steps: [] });
 });
 
-/* ---------- 404 for /api/* ---------- */
-app.use('/api', (_req, res) => {
-  res.status(404).json({ ok: false, error: 'API route not found' });
+// Start server
+app.listen(PORT, () => {
+  console.log(`FoodBridge server listening on port ${PORT}`);
 });
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`FoodBridge server listening on port ${PORT}`));
