@@ -10,7 +10,8 @@
     button { margin: 5px; padding: 8px 12px; cursor:pointer; }
     .recipe { border: 1px solid #eee; padding: 10px; margin-bottom: 10px; }
   </style>
-  <script src="frontend.js"></script>
+  <!-- Load our frontend logic (no inline JS below) -->
+  <script defer src="frontend.js"></script>
 </head>
 <body>
   <h1>🥖 FoodBridge</h1>
@@ -48,38 +49,5 @@
     <button type="submit">Send Email</button>
   </form>
   <div id="emailStatus"></div>
-
-  <script>
-    // Init cart render
-    renderCart();
-
-    // Email test hook
-    document.getElementById("emailForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const emailTo = document.getElementById("emailTo").value;
-
-      showLoader();
-      try {
-        const res = await fetch("http://localhost:10000/api/email/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: emailTo,
-            subject: "Your FoodBridge Plan",
-            html: document.getElementById("plan-container").innerHTML
-          })
-        });
-        const out = await res.json();
-        if (out.ok) {
-          document.getElementById("emailStatus").innerText = "✅ Email sent successfully!";
-        } else {
-          document.getElementById("emailStatus").innerText = "❌ Failed: " + JSON.stringify(out.error || out);
-        }
-      } catch (err) {
-        document.getElementById("emailStatus").innerText = "⚠️ Error: " + err.message;
-      }
-      hideLoader();
-    });
-  </script>
 </body>
 </html>
