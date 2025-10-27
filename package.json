@@ -1,12 +1,10 @@
 {
   "name": "foodbridge-server",
   "version": "1.0.0",
-  "description": "FoodBridge backend server with Gmail SMTP + AI ingest pipeline",
+  "description": "FoodBridge backend server with Gmail SMTP + AI recipe ingestion",
   "main": "index.js",
   "type": "module",
-  "engines": {
-    "node": "20.x"
-  },
+  "engines": { "node": "20.x" },
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"
@@ -20,7 +18,5 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
-  },
-  "author": "FoodBridge Team",
-  "license": "MIT"
+  }
 }
