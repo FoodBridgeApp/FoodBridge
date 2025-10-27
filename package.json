@@ -1,22 +1,18 @@
 {
   "name": "foodbridge-server",
   "version": "1.0.0",
-  "description": "FoodBridge backend server with Gmail SMTP + AI recipe ingestion",
-  "main": "index.js",
+  "description": "FoodBridge backend (Gmail SMTP) + static site",
   "type": "module",
+  "main": "index.js",
   "engines": { "node": "20.x" },
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
   "dependencies": {
+    "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "nodemailer": "^6.9.13",
-    "openai": "^4.0.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemailer": "^6.9.13"
   }
 }
