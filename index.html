@@ -1,136 +1,38 @@
-﻿<!doctype html>
-<html lang="en">
-<head>
-  <!-- build 20251023081246 -->
-  <meta charset="utf-8"/>
-  <title>FoodBridge — NEW BUILD 20251023081801</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="icon" href="./favicon.ico"/>
-  <link rel="stylesheet" href="./styles.css?v=1761282097">
-  <script defer src="./config.js?v=1761282097"></script>
-  <script defer src="./fb.js?v=20251028080345"></script>
-</head>
-<body>
-<div style="position:sticky;top:0;z-index:9999;background:#111;color:#fff;padding:10px 14px;font-family:system-ui,Arial">
-  Deployed NEW BUILD 20251023081801 — if you still see the old page, hard refresh (Ctrl+F5).
-</div>
-  <header class="topbar">
-    <div class="brand">🥖 FoodBridge</div>
-    <div class="api-label">API: <span id="apiBase"></span></div>
-    <div class="actions">
-      <button id="btn-print" class="btn">Print Plan</button>
-      <button id="btn-email" class="btn btn-primary">Email Plan</button>
-    </div>
-  </header>
+// /docs/fb.js
+console.log("[FB] boot");
 
-  <div id="spinner" class="spinner hidden">
-    <img src="./assets/spinner-baguette.svg" alt="Loading..."/>
-    <div>Working…</div>
-  </div>
+// ---------------- API base ----------------
+const API_BASE = (typeof window !== "undefined" && window.FB_API_BASE)
+  ? window.FB_API_BASE.replace(/\/+$/, "")
+  : (location.hostname === "localhost"
+      ? "http://localhost:10000"
+      : "https://foodbridge-server-rv0a.onrender.com");
 
-  <main class="layout">
-    <section class="ingest">
-      <h1>AI Recipe</h1>
-      <div class="card">
-        <div class="row">
-          <input id="dish" placeholder="Dish name e.g., fish tacos"/>
-          <select id="diet">
-            <option value="">Diet: None</option>
-            <option>Vegan</option><option>Vegetarian</option><option>Paleo</option>
-            <option>Gluten-Free</option><option>Dairy-Free</option><option>Keto</option><option>Pescatarian</option>
-          </select>
-          <button id="btnDish" class="btn">Generate</button>
-        </div>
-        <div class="recipe-readout">
-          <h2 id="dishTitle" class="recipe-title"></h2>
-          <div id="dishMeta" class="recipe-sub"></div>
-          <div class="memphis"></div>
-          <div class="grid-2">
-            <div>
-              <h3>Ingredients</h3>
-              <ul id="dishIngredients" class="list"></ul>
-            </div>
-            <div>
-              <h3>Steps</h3>
-              <ol id="dishSteps" class="list"></ol>
-            </div>
-          </div>
-        </div>
-        <div class="row" style="gap:8px;margin-top:10px">
-          <button id="btnAddIngredients" class="btn secondary" disabled>Add ingredients to cart</button>
-        </div>
-      </div>
+const API = `${API_BASE}/api`;
 
-      <h1>Import from URL</h1>
-      <div class="card">
-        <div class="row">
-          <input id="txt-url" placeholder="https://www.instagram.com/p/... or https://www.tiktok.com/@..."/>
-          <button id="btn-ingest-url" class="btn">Import</button>
-        </div>
-        <div class="recipe-readout">
-          <h2 id="urlTitle" class="recipe-title"></h2>
-          <div id="urlMeta" class="recipe-sub"></div>
-          <div class="memphis"></div>
-          <div class="grid-2">
-            <div>
-              <h3>Ingredients</h3>
-              <ul id="urlIngredients" class="list"></ul>
-            </div>
-            <div>
-              <h3>Steps</h3>
-              <ol id="urlSteps" class="list"></ol>
-            </div>
-          </div>
-        </div>
-        <div class="row" style="gap:8px;margin-top:10px">
-          <button id="btnAddIngredientsUrl" class="btn secondary" disabled>Add ingredients to cart</button>
-        </div>
-      </div>
+// ---------------- helpers ----------------
+const $ = (id) => document.getElementById(id);
+const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+const esc = (s) => String(s ?? "")
+  .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+  .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+const setHTML = (el, s="") => { if (el) el.innerHTML = s; };
 
-      <h1>Audio</h1>
-      <div class="card">
-        <input id="file-audio" type="file" accept="audio/*"/>
-        <button id="btn-ingest-audio" class="btn">Transcribe & Extract</button>
-      </div>
+// Spinner / loader (supports #spinner or #loader)
+const _spinner = () => $("spinner") || $("loader");
+function showSpinner(){ const s=_spinner(); if(!s) return; s.classList.remove?.("hidden"); s.style.display="block"; }
+function hideSpinner(){ const s=_spinner(); if(!s) return; s.classList.add?.("hidden"); s.style.display="none"; }
 
-      <h1>Ingredient Suggestions</h1>
-      <div class="card">
-        <div class="row"><input id="q" placeholder="type: tomato"/><button id="btn-suggest" class="btn secondary">Suggest</button></div>
-        <ul id="suggestions" class="list"></ul>
-      </div>
-    </section>
-
-    <section class="recipes">
-      <h1>AI Recipes</h1>
-      <div id="recipes"></div>
-    </section>
-
-    <aside id="cart" class="cart sticky">
-      <div class="cart-header">
-        <h2>Shopping Cart</h2>
-        <div class="checkout-total">$<span id="checkout-total">0.00</span></div>
-      </div>
-      <ul id="cart-items"></ul>
-      <div class="cart-actions">
-        <button id="btn-opt-all" class="btn btn-primary">Optimize All</button>
-      </div>
-      <div id="savings" class="savings"></div>
-    </aside>
-  </main>
-
-  <footer class="footer">© 2025 FoodBridge</footer>
-</body>
-</html>
-
-
-
-
-
-
-
-
-
-
-
-
-
+// ---------------- cart (renders into #cart-items and total span) ----------------
+let cart = JSON.parse(localStorage.getItem("fb_cart") || "[]");
+function saveCart(){ localStorage.setItem("fb_cart", JSON.stringify(cart)); }
+function updateTotal(v=0){ const el=$("checkout-total"); if (el) el.textContent = Number(v||0).toFixed(2); }
+function renderCart(){
+  const list = $("cart-items");
+  if (!list) return;
+  if (!cart.length){
+    setHTML(list, `<li><em>Your cart is empty.</em></li>`);
+    updateTotal(0);
+    return;
+  }
+  setHTML(list, cart.map(i =>
