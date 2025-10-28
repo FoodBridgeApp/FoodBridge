@@ -4,6 +4,8 @@ import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
 import { sendMail } from "./lib/mailer.js";
+import ingestRouter from "./server/routes/ingest.js";
+import suggestRouter from "./server/routes/suggest.js";
 
 const app = express();
 
@@ -17,7 +19,11 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "FoodBridge API", ts: new Date().toISOString() });
 });
 
-// --- Email send (alias path used by your current frontend) ---
+// --- Ingest & Suggest endpoints (new) ---
+app.use("/api/ingest", ingestRouter);
+app.use("/api/suggest", suggestRouter);
+
+// --- Email send (existing alias used by your frontend) ---
 app.post("/api/email/send", async (req, res) => {
   try {
     const { to, subject, text, html } = req.body || {};
@@ -31,7 +37,7 @@ app.post("/api/email/send", async (req, res) => {
   }
 });
 
-// (Optional) canonical path if you want to migrate the frontend later
+// Optional canonical path
 app.post("/api/mail/send", async (req, res) => {
   try {
     const { to, subject, text, html } = req.body || {};
