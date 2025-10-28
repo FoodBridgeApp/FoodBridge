@@ -1,14 +1,13 @@
-// /server/routes/version.js (ESM)
-import express from "express";
+// /server/routes/version.js
+import { Router } from "express";
 
-const router = express.Router();
+const router = Router();
 
 router.get("/", (_req, res) => {
   res.json({
     ok: true,
-    name: "FoodBridge API",
-    version: process.env.APP_VERSION || "dev",
-    node: process.version
+    service: "FoodBridge API",
+    version: process.env.APP_VERSION || "2025-10-28"
   });
 });
 
