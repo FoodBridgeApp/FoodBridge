@@ -1,18 +1,33 @@
-﻿import express from "express";
-import { estimatePrice, regionFromIp, REGION_MULT } from "../services/priceEstimator";
+// server/routes/prices.js
+import express from "express";
+
 const router = express.Router();
 
-router.post("/estimate", (req, res) => {
-  const items: { name:string; qty?:number; unit?:string }[] = req.body?.items || [];
-  const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0] || req.socket.remoteAddress || "";
-  const region = regionFromIp(String(ip));
-  const mult = (REGION_MULT as any)[region] ?? 1;
+/**
+ * Example route: POST /api/prices/optimize
+ * Expects a JSON body with { items: [...] }
+ * Returns some mock optimized prices (replace with real logic later)
+ */
+router.post("/optimize", async (req, res) => {
+  try {
+    const { items } = req.body;
+    if (!items || !Array.isArray(items)) {
+      return res.status(400).json({ ok: false, error: "Missing items array" });
+    }
 
-  const priced = items.map(it => {
-    const p = estimatePrice(it.name, it.qty || 1, it.unit || "");
-    return { ...it, price: +(p * mult).toFixed(2) };
-  });
-  res.json({ ok:true, region, items: priced, subtotal: +priced.reduce((a,b)=>a+(b.price||0),0).toFixed(2) });
+    // Placeholder logic for optimization
+    const optimized = items.map((item) => ({
+      ...item,
+      optimizedPrice: (item.price || 1) * 0.9, // example: 10% discount
+    }));
+
+    res.json({ ok: true, optimized });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
-export default router;
+// ✅ ES module export: mountable function
+export default (app) => {
+  app.use("/api/prices", router);
+};
