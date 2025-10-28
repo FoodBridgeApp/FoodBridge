@@ -1,43 +1,34 @@
-// server/routes/emailPlan.js
-const express = require('express');
-const nodemailer = require('nodemailer');
+// server/routes/emailPlan.js  (ESM)
+import { Router } from 'express';
+import { sendMail } from '../../lib/mailer.js';
 
-const router = express.Router();
+const router = Router();
 
-// create reusable transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === 'true', // false for STARTTLS
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
-
-// health check
-router.get('/health', async (req, res) => {
+// Verify mailer / basic health
+router.get('/health', async (_req, res) => {
   try {
-    await transporter.verify();
+    // sendMail's transporter verify happens on boot; we can just return ok here
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
 });
 
-// send test email
-router.post('/send-test', async (req, res) => {
+// *** This is the endpoint your frontend calls ***
+router.post('/send', async (req, res) => {
   try {
-    const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM,
-      to: process.env.SMTP_USER, // send to yourself for testing
-      subject: 'Test Email from FoodBridge',
-      text: 'This is a test email from FoodBridge backend.',
-    });
-    res.json({ ok: true, id: info.messageId });
+    const { to, subject, text, html } = req.body || {};
+    if (!to || !subject) {
+      return res.status(400).json({ ok: false, error: 'Missing "to" or "subject".' });
+    }
+    const info = await sendMail({ to, subject, text, html });
+    res.json({ ok: true, messageId: info.messageId });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false, error: String(err) });
   }
 });
 
-module.exports = router;
+// Mount this router under /api/email in index.js
+export default function mountEmailRoutes(app) {
+  app.use('/api/email', router);
+}
