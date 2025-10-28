@@ -2,14 +2,8 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-
-// Each of these files should export a default function: (app) => { ... }
-import mountEmailRoutes from "./routes/emailPlan.js";
-import mountPricesRoutes from "./routes/version.js" assert { type: "json" }; // <-- REMOVE THIS LINE IF WRONG
-import mountVersionRoutes from "./routes/version.js";
-
-// If you don't actually have a prices router, delete the import+call above and keep version only.
-// (Most repos have routes/emailPlan.js, routes/prices.js, routes/version.js. Adjust imports to match YOUR tree.)
+import mountEmailRoutes from "./routes/emailPlan.js";   // mounts /api/email/*
+// (optional) import and mount your other routers here
 
 const app = express();
 
@@ -26,14 +20,12 @@ const allowList = new Set([
   "http://localhost:5500",
 ]);
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // curl / same-origin
-      cb(null, allowList.has(origin));
-    },
-  })
-);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    cb(null, allowList.has(origin));
+  },
+}));
 app.use(express.json({ limit: "2mb" }));
 
 // Health
@@ -41,11 +33,8 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "FoodBridge API", ts: new Date().toISOString() });
 });
 
-// Mount feature routes
-mountEmailRoutes(app);   // exposes POST /api/email/send (and /api/email/health if you kept it)
-// If you have these, keep them; otherwise remove.
-// mountPricesRoutes(app);
-mountVersionRoutes(app);
+// Mount feature routes (this must come BEFORE the 404)
+mountEmailRoutes(app);
 
 // 404 for unknown /api
 app.use("/api", (_req, res) => {
