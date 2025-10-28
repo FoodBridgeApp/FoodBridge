@@ -1,37 +1,35 @@
-﻿// server/index.js
-const express = require("express");
+// server/index.js
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
 
+// ---- App ----
 const app = express();
-app.set("trust proxy", 1);
-app.use(express.json({ limit: "1mb" }));
 
-// --- Routers (make sure these files exist) ---
-const prices    = require("./routes/prices");
-const emailPlan = require("./routes/emailPlan");
-const version   = require("./routes/version");
+// CORS: allow GitHub Pages (or env override)
+const allowOrigin =
+  process.env.FRONTEND_ORIGIN ||
+  process.env.CORS_ORIGIN ||
+  'https://foodbridgeapp.github.io';
+app.use(cors({ origin: allowOrigin }));
+app.use(express.json());
 
-// --- Simple health & root checks ---
-app.get("/", (_req, res) => {
-  res.type("text/plain").send("FoodBridge server is up");
+// --- Health ---
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, service: 'FoodBridge API', ts: new Date().toISOString() });
 });
 
-app.get("/health", (_req, res) => {
-  res.json({
-    ok: true,
-    env: {
-      hasResendKey: Boolean(process.env.RESEND_API_KEY),
-      from: process.env.RESEND_FROM || process.env.EMAIL_FROM || "FoodBridge <onboarding@resend.dev>",
-    },
-  });
+// --- Routes ---
+import emailPlanRoutes from './routes/emailPlan.js';
+emailPlanRoutes(app);
+
+// --- 404 for unknown /api paths ---
+app.use('/api', (_req, res) => {
+  res.status(404).json({ ok: false, error: 'API route not found' });
 });
 
-// --- Mount API routes (before listen) ---
-app.use("/api/prices",  prices);
-app.use("/api/email",   emailPlan);
-app.use("/api/version", version);
-
-// --- Start server ---
+// --- Listen ---
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`[server] Listening on port ${PORT}`);
+  console.log(`FoodBridge server listening on port ${PORT}`);
 });
