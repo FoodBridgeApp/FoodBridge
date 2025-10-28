@@ -1,14 +1,14 @@
-// /docs/fb.js
+﻿// /docs/fb.js
 console.log("[FB] boot");
 
-// 1) Resolve API base (use /docs/config.js if present)
+// Resolve API base (prefer /docs/config.js -> window.FB_API_BASE)
 const API_BASE = (typeof window !== "undefined" && window.FB_API_BASE)
   ? window.FB_API_BASE.replace(/\/+$/, "")
   : (location.hostname === "localhost"
       ? "http://localhost:10000"
       : "https://foodbridge-server-rv0a.onrender.com");
 
-// Always use /api paths
+// Always use /api/* on the server
 const API = `${API_BASE}/api`;
 
 // Helpers
@@ -20,10 +20,10 @@ function escapeHtml(s){
 }
 
 // Spinner / loader (supports #spinner or #loader)
-function showSpinner(){ const a=$("spinner")||$("loader"); if(a) a.classList.remove("hidden"), (a.style.display="block"); }
-function hideSpinner(){ const a=$("spinner")||$("loader"); if(a) a.classList.add?.("hidden"); if(a) a.style.display="none"; }
+function showSpinner(){ const a=$("spinner")||$("loader"); if(a){ a.classList.remove?.("hidden"); a.style.display="block"; } }
+function hideSpinner(){ const a=$("spinner")||$("loader"); if(a){ a.classList.add?.("hidden"); a.style.display="none"; } }
 
-// Cart
+// Cart (matches your HTML with inline onclicks)
 let cart = JSON.parse(localStorage.getItem("fb_cart") || "[]");
 function saveCart(){ localStorage.setItem("fb_cart", JSON.stringify(cart)); }
 function renderCart(){
@@ -33,20 +33,18 @@ function renderCart(){
 }
 function addToCart(name){ cart.push(name); saveCart(); renderCart(); }
 function printPlan(){ window.print(); }
-
-// Expose for inline onclick in index.html
 window.addToCart = addToCart;
 window.printPlan = printPlan;
 
-// Boot UI
+// Wire UI after DOM is ready
 document.addEventListener("DOMContentLoaded", () => {
   renderCart();
 
-  // Show API base if you have <span id="apiBase">
+  // Show API base if page has <span id="apiBase">
   const apiSpan = document.querySelector("#apiBase");
   if (apiSpan) apiSpan.textContent = API_BASE;
 
-  // Email form wiring
+  // Email form (Friday route: /api/email/send)
   const form = $("emailForm");
   const statusEl = $("emailStatus");
   if (form) {
@@ -82,14 +80,14 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Health ping (so you see traffic immediately)
+  // Health ping (so you see traffic immediately in Network)
   fetch(`${API}/health`)
     .then(r => r.json())
     .then(j => console.log("[FB] health", j))
     .catch(e => console.warn("[FB] health error", e));
 });
 
-// Optional: expose a helper to call AI free-text later
+// Optional: expose helper for future AI ingestion
 async function fbIngestText(text, diet){
   try{
     const r = await fetch(`${API}/ingest/free-text`, {
@@ -97,3 +95,11 @@ async function fbIngestText(text, diet){
       body: JSON.stringify({ text, diet })
     });
     const j = await r.json();
+    console.log("[FB] ingest result", j);
+    return j;
+  }catch(e){
+    console.error("[FB] ingest fail", e);
+    return null;
+  }
+}
+window.fbIngestText = fbIngestText;
