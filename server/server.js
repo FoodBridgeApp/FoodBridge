@@ -1,139 +1,102 @@
-﻿import express from "express";
+import "dotenv/config";
+import express from "express";
 import cors from "cors";
 import nodemailer from "nodemailer";
 
 const app = express();
-const PORT = process.env.PORT || 10000;
 
-// Allow your Pages origin + local dev
-const allowed = [
-  "https://foodbridgeapp.github.io",
-  "https://foodbridgeapp.github.io/FoodBridge",
-  "https://foodbridgeapp.github.io/FoodBridge/",
+/** CORS allowlist */
+const fromEnv = (process.env.FRONTEND_ORIGIN || "https://foodbridgeapp.github.io")
+  .split(",").map(s => s.trim());
+const allowList = new Set([
+  ...fromEnv,
+  "http://localhost:3000",
   "http://localhost:5173",
-  "http://localhost:3000"
-];
+  "http://localhost:8080",
+  "http://127.0.0.1:5500",
+  "http://localhost:5500",
+]);
+
 app.use(cors({
-  origin(origin, cb){
-    if (!origin || allowed.some(a => origin?.startsWith(a))) return cb(null, true);
-    return cb(null, true); // permissive for now
-  },
-  credentials: true
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    cb(null, allowList.has(origin));
+  }
 }));
 app.use(express.json({ limit: "2mb" }));
 
-// ---- Health ----
-app.get("/api/health", (req,res)=> {
-  res.json({ ok:true, message:"FoodBridge API live", env: { port: PORT }});
+/** DEBUG: commit + whoami */
+const COMMIT = process.env.RENDER_GIT_COMMIT
+  || process.env.VERCEL_GIT_COMMIT_SHA
+  || process.env.GIT_COMMIT
+  || "local";
+
+/** REAL ROUTES — defined BEFORE any 404 fallback */
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
 });
 
-// ---- Ingredient suggestions (simple demo) ----
-app.get("/api/ingredients/suggest", (req,res)=>{
-  const q = (req.query.q||"").toString().toLowerCase();
-  const base = ["tomato","onion","garlic","chicken","beef","rice","pasta","basil","cilantro","avocado","egg","milk","cheese"];
-  const suggestions = base
-    .filter(n => !q || n.includes(q))
-    .slice(0, 10)
-    .map(n => ({ name:n }));
-  res.json({ ok:true, query:q, suggestions });
+app.get("/api/version", (_req, res) => {
+  res.json({ ok: true, service: "FoodBridge API", version: process.env.APP_VERSION || "unset", commit: COMMIT });
 });
 
-// ---- AI-ish recipe stubs so UI renders immediately ----
-function demoRecipe(title="AI Dish", servings=4){
-  return {
-    title,
-    servings,
-    ingredients: [
-      { name: "tomato" }, { name: "onion" }, { name: "garlic" }, { name: "olive oil" },
-      { name: "salt" }, { name: "pepper" }
-    ],
-    steps: [
-      "Prep the ingredients.",
-      "Saute aromatics.",
-      "Combine and simmer.",
-      "Season to taste and serve."
-    ]
-  };
-}
-
-app.post("/api/ingest/free-text", (req,res)=>{
-  const { prompt="", diet="", servings=4 } = req.body || {};
-  res.json({ ok:true, recipe: demoRecipe(prompt || "Chef's Choice", servings) });
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
+  port: Number(process.env.SMTP_PORT || 587),
+  secure: String(process.env.SMTP_SECURE || "false") === "true",
+  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
 
-app.post("/api/ingest/url", (req,res)=>{
-  const { url="", diet="", servings=4 } = req.body || {};
-  res.json({ ok:true, recipe: demoRecipe("Imported Recipe", servings) });
+app.get("/api/email/health", async (_req, res) => {
+  try { await transporter.verify(); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ ok: false, error: String(err?.message || err) }); }
 });
 
-app.post("/api/ingest/audio", (req,res)=>{
-  res.json({ ok:true, recipe: demoRecipe("Audio Transcribed Recipe", 4) });
-});
-
-// ---- Cart pricing/optimization (demo math so UI doesn't hang) ----
-function priceItems(items=[]){
-  let total = 0;
-  const priced = (items||[]).map(it=>{
-    const unit = Number(it.unitPrice ?? (Math.random()*3 + 1)).toFixed(2);
-    const qty  = Number(it.qty ?? 1);
-    const line = qty * Number(unit);
-    total += line;
-    return { ...it, unitPrice: Number(unit), qty, lineTotal: Number(line.toFixed(2)) };
-  });
-  return { items: priced, total: Number(total.toFixed(2)) };
-}
-
-app.post("/api/pricing/cart", (req,res)=>{
-  const { items=[] } = req.body || {};
-  const priced = priceItems(items);
-  res.json(priced);
-});
-
-app.post("/api/optimize/item", (req,res)=>{
-  const { item } = req.body || {};
-  if (!item) return res.status(400).json({ ok:false, error:"Missing item" });
-  const cheaper = Math.max(0.5, (item.unitPrice ?? 2) * 0.9);
-  const lineTotal = Number((cheaper * (item.qty ?? 1)).toFixed(2));
-  res.json({ ...item, unitPrice: Number(cheaper.toFixed(2)), lineTotal });
-});
-
-app.post("/api/optimize/all", (req,res)=>{
-  const { items=[] } = req.body || {};
-  const before = priceItems(items);
-  const optimized = before.items.map(it=>{
-    const cut = Math.max(0.5, (it.unitPrice ?? 2) * 0.9);
-    return { ...it, unitPrice: Number(cut.toFixed(2)), lineTotal: Number((cut * it.qty).toFixed(2)) };
-  });
-  const afterTotal = optimized.reduce((s,x)=> s + (x.lineTotal ?? (x.unitPrice*x.qty)), 0);
-  const savings = Number((before.total - afterTotal).toFixed(2));
-  res.json({ items: optimized, total: Number(afterTotal.toFixed(2)), savings });
-});
-
-// ---- Email plan (SMTP) ----
-// Set in Render: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_TO (optional)
-app.post("/api/email/plan", async (req,res)=>{
-  try{
-    const { subject="FoodBridge Plan", body="", to } = req.body || {};
-    const host = process.env.SMTP_HOST;
-    const port = Number(process.env.SMTP_PORT || 587);
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS;
-    const from = process.env.SMTP_FROM || "no-reply@foodbridge.local";
-    const rcpt = to || process.env.SMTP_TO;
-    if (!host || !user || !pass || !from || !rcpt){
-      return res.status(400).json({ ok:false, error:"SMTP env vars missing (SMTP_HOST/PORT/USER/PASS/FROM[/TO])" });
-    }
-    const transporter = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
-    const info = await transporter.sendMail({ from, to: rcpt, subject, text: body });
-    res.json({ ok:true, id: info.messageId });
-  }catch(e){
-    res.status(500).json({ ok:false, error: e.message || String(e) });
+app.post("/api/email/send", async (req, res) => {
+  try {
+    const { to, subject, text, html } = req.body || {};
+    if (!to || !subject) return res.status(400).json({ ok: false, error: "Missing to or subject" });
+    const info = await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to, subject, text, html,
+    });
+    res.json({ ok: true, id: info.messageId });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
 });
 
-// ---- Static ping on root ----
-app.get("/", (_req,res)=> res.json({ ok:true, message:"FoodBridge server root" }));
+app.get("/api/_debug/whoami", (_req, res) => {
+  res.json({ ok: true, file: import.meta.url, commit: COMMIT, ts: new Date().toISOString() });
+});
 
-app.listen(PORT, ()=> {
-  console.log(`[foodbridge] listening on :${PORT}`);
+app.get("/api/_debug/info", (_req, res) => {
+  try {
+    const stack = (app._router && app._router.stack) || [];
+    const routes = [];
+    for (const s of stack) {
+      if (s.route?.path) {
+        routes.push({ path: s.route.path, methods: Object.keys(s.route.methods || {}) });
+      } else if (s.name === "router" && s.handle?.stack) {
+        for (const r of s.handle.stack) {
+          if (r.route?.path) {
+            routes.push({ path: r.route.path, methods: Object.keys(r.route.methods || {}) });
+          }
+        }
+      }
+    }
+    res.json({ ok: true, commit: COMMIT, version: process.env.APP_VERSION || "unset", routes });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+/** 404 fallback — MUST be last */
+app.use("/api", (_req, res) => {
+  res.status(404).json({ ok: false, error: "API route not found" });
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`FoodBridge server listening on port ${PORT}`);
 });
