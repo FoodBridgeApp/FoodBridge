@@ -1,12 +1,11 @@
-// server/index.js (ESM)
-import "dotenv/config";
+﻿import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import nodemailer from "nodemailer";
 
 const app = express();
 
-// --- CORS allowlist ---
+/** CORS allowlist */
 const fromEnv = (process.env.FRONTEND_ORIGIN || "https://foodbridgeapp.github.io")
   .split(",").map(s => s.trim());
 const allowList = new Set([
@@ -26,28 +25,37 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "2mb" }));
 
-// --- Health ---
+/** DEBUG: show commit and mounted routes */
+const COMMIT = process.env.RENDER_GIT_COMMIT
+  || process.env.VERCEL_GIT_COMMIT_SHA
+  || process.env.GIT_COMMIT
+  || "local";
+
+/** --- Real routes MUST come BEFORE the 404 catch-all --- */
+
+// Health
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
-// --- Version ---
+// Version
 app.get("/api/version", (_req, res) => {
   res.json({
     ok: true,
     service: "FoodBridge API",
     version: process.env.APP_VERSION || "unset",
+    commit: COMMIT,
   });
 });
 
-// --- Email (nodemailer) ---
+// Email (Nodemailer)
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp.gmail.com",
   port: Number(process.env.SMTP_PORT || 587),
   secure: String(process.env.SMTP_SECURE || "false") === "true",
   auth: {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS, // MUST be a Gmail App Password (16 chars, no spaces)
+    pass: process.env.SMTP_PASS, // Gmail App Password (16 chars, no spaces)
   },
 });
 
@@ -76,12 +84,12 @@ app.post("/api/email/send", async (req, res) => {
   }
 });
 
-// --- DEBUG: commit + mounted routes ---
-const COMMIT = process.env.RENDER_GIT_COMMIT
-  || process.env.VERCEL_GIT_COMMIT_SHA
-  || process.env.GIT_COMMIT
-  || "local";
+// Debug: which file is actually running?
+app.get("/api/_debug/whoami", (_req, res) => {
+  res.json({ ok: true, file: import.meta.url, ts: new Date().toISOString() });
+});
 
+// Debug: list mounted routes
 app.get("/api/_debug/info", (_req, res) => {
   try {
     const stack = (app._router && app._router.stack) || [];
@@ -103,7 +111,7 @@ app.get("/api/_debug/info", (_req, res) => {
   }
 });
 
-// --- 404 fallback MUST be last ---
+/** --- 404 fallback MUST be last --- */
 app.use("/api", (_req, res) => {
   res.status(404).json({ ok: false, error: "API route not found" });
 });
@@ -111,7 +119,4 @@ app.use("/api", (_req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`FoodBridge server listening on port ${PORT}`);
-});
-app.get('/api/_debug/whoami', (_req,res) => {
-  res.json({ ok:true, file: import.meta.url, ts: new Date().toISOString() });
 });
