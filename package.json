@@ -1,33 +1,17 @@
-{
-  "name": "foodbridge",
+﻿{
+  "name": "foodbridge-server",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "FoodBridge app backend and frontend server",
-  "main": "server/index.js",
+  "engines": { "node": "20.x" },
   "scripts": {
     "start": "node server/index.js",
-    "dev": "nodemon server/index.js"
-  },
-  "engines": {
-    "node": "20.x"
+    "dev": "node server/index.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "nodemailer": "^6.9.13"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.4"
-  },
-  "keywords": [
-    "foodbridge",
-    "meal-planner",
-    "api",
-    "express",
-    "render"
-  ],
-  "author": "Christian Castaneda",
-  "license": "MIT"
+  }
 }
