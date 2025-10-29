@@ -112,3 +112,6 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`FoodBridge server listening on port ${PORT}`);
 });
+app.get('/api/_debug/whoami', (_req,res) => {
+  res.json({ ok:true, file: import.meta.url, ts: new Date().toISOString() });
+});
