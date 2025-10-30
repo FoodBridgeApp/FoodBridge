@@ -1,10 +1,8 @@
-<<<<<<< HEAD
+HEAD
 // server/index.js  (ESM, full file)
 // Features: health, version, config, logging, email send, templated email,
 //           demo ingest, cart API (memory or Redis), cart email summary, export JSON
 //           NEW: optional JWT/HMAC auth gates (FB_REQUIRE_AUTH="true")
-
-=======
 ﻿import "dotenv/config";
 >>>>>>> 95c7b71 (chore: add /api/ping and sanitized /api/config)
 import express from "express";
@@ -16,7 +14,7 @@ import { authGate, isAuthRequired } from "./auth.js";
 
 // ---- Choose cart backend at runtime ----
 const USE_REDIS = String(process.env.CART_BACKEND || "").toLowerCase() === "redis";
-let getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems;
+let getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems
 
 if (USE_REDIS) {
   const m = await import("./cart-redis.js");
