@@ -1,21 +1,14 @@
 // server/cart.js (ESM)
-// Chooses Redis or Memory store automatically, with safe fallback.
-// Exposes: getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems, backend
-
 import { randomUUID } from "node:crypto";
 import { log } from "./logger.js";
 import { makeRedisCartStore } from "./cart-redis.js";
 
-// ===== In-memory fallback =====
+// In-memory fallback
 const memDB = new Map();
 
 const memStore = {
-  get backend() {
-    return "memory";
-  },
-  async getCart(cartId) {
-    return memDB.get(String(cartId)) || null;
-  },
+  get backend() { return "memory"; },
+  async getCart(cartId) { return memDB.get(String(cartId)) || null; },
   async upsertCart({ cartId, userId, items = [] }) {
     const id = cartId ? String(cartId) : `${String(userId)}-${shortId()}`;
     const base = memDB.get(id) || { cartId: id, userId: String(userId), items: [] };
@@ -38,45 +31,34 @@ const memStore = {
     memDB.set(id, merged);
     return merged;
   },
-  async deleteCart(cartId) {
-    return memDB.delete(String(cartId));
-  },
-  async ping() {
-    return true;
-  },
+  async deleteCart(cartId) { return memDB.delete(String(cartId)); },
+  async ping() { return true; },
 };
 
 function shortId() {
   return randomUUID().replace(/-/g, "").slice(0, 10);
 }
 
-// ===== normalize util (shared) =====
 export function normalizeItems(items) {
   const arr = Array.isArray(items) ? items : [];
   const now = Date.now();
   return arr.map((raw, idx) => {
     const it = raw || {};
     return {
-      id:
-        it.id ||
-        `${now}-${Math.random().toString(36).slice(2, 12)}-${idx}`,
+      id: it.id || `${now}-${Math.random().toString(36).slice(2, 12)}-${idx}`,
       type: String(it.type || "unknown"),
       title: String(it.title || "Untitled"),
       sourceUrl: it.sourceUrl ?? null,
-      durationSec:
-        it.durationSec == null ? null : Number(it.durationSec),
+      durationSec: it.durationSec == null ? null : Number(it.durationSec),
       addedAt: it.addedAt || new Date().toISOString(),
     };
   });
 }
 
-// ===== choose backend safely =====
+// choose backend safely
 let STORE = memStore;
 (function initStore() {
-  const wantRedis =
-    String(process.env.FB_USE_REDIS || "")
-      .toLowerCase()
-      .trim() === "true";
+  const wantRedis = String(process.env.FB_USE_REDIS || "").toLowerCase().trim() === "true";
   const hasUrl = !!process.env.REDIS_URL;
 
   if (wantRedis && hasUrl) {
@@ -85,9 +67,7 @@ let STORE = memStore;
       STORE = r;
       log("cart_store_backend", { backend: r.backend });
     } catch (err) {
-      log("cart_store_fallback_memory", {
-        reason: String(err && err.message ? err.message : err),
-      });
+      log("cart_store_fallback_memory", { reason: String(err?.message || err) });
       STORE = memStore;
     }
   } else {
@@ -96,7 +76,6 @@ let STORE = memStore;
   }
 })();
 
-// ===== re-export a stable API =====
 export const backend = () => STORE.backend;
 export const getCart = (...a) => STORE.getCart(...a);
 export const upsertCart = (...a) => STORE.upsertCart(...a);
