@@ -1,6 +1,7 @@
-// server/index.js  (ESM)
-// Features: health, version, config, logging, email send, demo ingest,
-//           NEW: in-memory cart API, templated email send
+// server/index.js  (ESM, full file)
+// Features: health, version, config, logging, email send, templated email,
+//           demo ingest, in-memory cart API,
+//           NEW: email cart summary, export cart JSON
 
 import express from "express";
 import cors from "cors";
@@ -30,6 +31,9 @@ const VERSION = COMMIT || "dev-local";
 const ALLOW_ORIGINS = [
   "https://foodbridgeapp.github.io",
   "https://foodbridgeapp.github.io/FoodBridge",
+  // you can add dev origins here if needed:
+  // "http://localhost:5173",
+  // "http://localhost:3000",
 ];
 
 /* =========================
@@ -39,7 +43,7 @@ app.use(
   cors({
     credentials: true,
     origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // CLI tools
+      if (!origin) return cb(null, true); // CLI tools and same-origin
       cb(null, ALLOW_ORIGINS.includes(origin));
     },
   })
@@ -65,7 +69,7 @@ app.use(requestLogger());
 const emailLimiter = (() => {
   const bucket = new Map();
   const WINDOW_MS = 60_000;
-  const MAX = 20;
+  const MAX = Number(process.env.EMAIL_RATE_MAX || 20);
   return (ip) => {
     const now = Date.now();
     const cur = bucket.get(ip) || { count: 0, resetAt: now + WINDOW_MS };
@@ -183,6 +187,8 @@ app.get("/api/config", (req, res) => {
       emailEnabled: !!process.env.SMTP_HOST,
       cartApi: true,
       templatedEmail: true,
+      cartEmailSummary: true,
+      cartExportJson: true,
     },
     reqId: req.id,
   });
@@ -261,7 +267,7 @@ app.post("/api/email/send", async (req, res) => {
 });
 
 /* =========================
-   NEW: Templated Email
+   Templated Email
    ========================= */
 /**
  * Body: { to, subject, template: "basic", vars: {...}, from? }
@@ -344,7 +350,7 @@ app.post("/api/ingest/demo", (req, res) => {
 });
 
 /* =========================
-   NEW: Cart API
+   Cart API
    ========================= */
 
 // Create or update a cart (upsert). Body: { cartId?, userId, items? }
@@ -382,6 +388,70 @@ app.delete("/api/cart/:cartId", (req, res) => {
   const { cartId } = req.params;
   const ok = deleteCart(String(cartId));
   res.json({ ok, reqId: req.id });
+});
+
+/* =========================
+   NEW: Cart email summary + export
+   ========================= */
+
+// POST /api/cart/:cartId/email-summary
+// Body: { to, subject?, from? }
+app.post("/api/cart/:cartId/email-summary", async (req, res) => {
+  try {
+    const ip = req.ip || "unknown";
+    const gate = emailLimiter(ip);
+    if (!gate.allowed) {
+      return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt, reqId: req.id });
+    }
+
+    const { cartId } = req.params;
+    const cart = getCart(String(cartId));
+    if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
+
+    const { to, subject, from } = req.body || {};
+    if (!isValidEmail(to)) return res.status(400).json({ ok: false, error: "invalid_to", reqId: req.id });
+
+    const html = renderTemplate("cartSummary", {
+      title: "Your FoodBridge Cart",
+      intro: "Here’s a summary of your current cart.",
+      cart,
+      ctaText: "Open FoodBridge",
+      ctaUrl: "https://foodbridgeapp.github.io/FoodBridge",
+      footer: "If this wasn’t you, just ignore this email.",
+    });
+
+    const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
+    const t = await getTransporter();
+    const info = await t.sendMail({
+      from: sender,
+      to,
+      subject: subject || "Your FoodBridge Cart",
+      html,
+    });
+
+    res.json({
+      ok: true,
+      messageId: info.messageId || null,
+      accepted: info.accepted || [],
+      rejected: info.rejected || [],
+      response: info.response || null,
+      reqId: req.id,
+    });
+  } catch (err) {
+    log("email_cart_summary_error", { error: String(err?.message || err), reqId: req.id });
+    res.status(500).json({ ok: false, error: "send_failed", reqId: req.id });
+  }
+});
+
+// GET /api/cart/:cartId/export.json
+app.get("/api/cart/:cartId/export.json", (req, res) => {
+  const { cartId } = req.params;
+  const cart = getCart(String(cartId));
+  if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
+
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(JSON.stringify({ ok: true, cart, exportedAt: new Date().toISOString() }));
 });
 
 /* =========================
