@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>FoodBridge — App</title>
+  <meta name="viewport" content="width=device-width" />
+  <style>
+    :root { --bd:#e5e7eb; --fg:#111; --muted:#6b7280; --bg:#fff; --chip:#f3f4f6; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background: #fafafa; margin: 24px; }
+    .wrap { max-width: 900px; margin: 0 auto; }
+    .card { background: var(--bg); border:1px solid var(--bd); border-radius: 12px; padding: 16px; margin: 12px 0; }
+    h1 { font-size: 24px; margin: 0 0 10px; }
+    h2 { font-size: 18px; margin: 8px 0; }
+    label { display:block; margin: 8px 0 6px; font-weight:600; }
+    input, textarea { width: 100%; padding:10px; border:1px solid var(--bd); border-radius:10px; }
+    .row { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+    .btn { padding: 10px 14px; border:1px solid var(--bd); background:#fff; border-radius:10px; cursor:pointer; }
+    .btn:hover { background:#f9fafb; }
+    .toolbar { display:flex; gap:8px; flex-wrap: wrap; margin: 10px 0; }
+    .muted { color: var(--muted); font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border-bottom:1px solid var(--bd); padding: 8px; text-align: left; }
+    .chip { display:inline-block; background: var(--chip); padding: 4px 8px; border-radius: 999px; font-size: 12px; }
+    .right { text-align: right; }
+    pre { background:#f6f8fa; padding: 12px; border-radius:10px; max-height: 360px; overflow:auto; }
+    .two { display:grid; gap:12px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 820px){ .row, .two { grid-template-columns: 1fr; } }
+  </style>
+  <script>
+    // Point the client at your server
+    window.__FB_API_BASE__ = "https://foodbridge-server-rv0a.onrender.com";
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>FoodBridge</h1>
+
+    <div class="card">
+      <div class="two">
+        <div>
+          <h2>Cart</h2>
+          <div class="toolbar">
+            <button class="btn" data-btn="health">Server Health</button>
+            <button class="btn" data-btn="loadCart">Load Cart</button>
+            <button class="btn" data-btn="export">Export JSON</button>
+            <button class="btn" data-btn="clearCartId">Clear Cart ID</button>
+          </div>
+          <div><span class="chip">Cart ID:</span> <span data-out="cartId">(none)</span></div>
+          <div class="muted">Cart ID is saved in your browser (<code>localStorage</code>) after first upsert.</div>
+        </div>
+
+        <div>
+          <h2>Email</h2>
+          <label>Email recipient</label>
+          <input data-field="emailTo" placeholder="you@example.com" />
+          <div class="toolbar">
+            <button class="btn" data-btn="emailHealth">Email Health</button>
+            <button class="btn" data-btn="emailSend">Send Cart Summary</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Add Items</h2>
+      <div class="row">
+        <div>
+          <label>Recipe Title</label>
+          <input data-field="recipeTitle" placeholder="Pasta alla Whatever" />
+        </div>
+        <div>
+          <label>Source URL (optional)</label>
+          <input data-field="recipeUrl" placeholder="https://example.com/recipe" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Duration (seconds, optional)</label>
+          <input data-field="recipeDur" placeholder="900" />
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button class="btn" data-btn="addRecipe">Add Recipe</button>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <div>
+          <label>Ingredient Title</label>
+          <input data-field="ingTitle" placeholder="Tomato" />
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button class="btn" data-btn="addIngredient">Add Ingredient</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Items</h2>
+      <table>
+        <thead>
+          <tr><th>Type</th><th>Title</th><th>Source</th><th class="right">Duration</th><th>Added</th></tr>
+        </thead>
+        <tbody data-out="items"><tr><td colspan="5" class="muted">No items yet.</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Raw Output</h2>
+      <pre data-out="raw">(results appear here)</pre>
+    </div>
+  </div>
+
+  <script type="module" src="./js/api.js"></script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
