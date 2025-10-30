@@ -1,9 +1,9 @@
-// server/cart.js (ESM)
+// server/cart.js (ESM, safe: no top-level import of cart-redis.js)
+
 import { randomUUID } from "node:crypto";
 import { log } from "./logger.js";
-import { makeRedisCartStore } from "./cart-redis.js";
 
-// In-memory fallback
+// ===== In-memory fallback =====
 const memDB = new Map();
 
 const memStore = {
@@ -39,6 +39,7 @@ function shortId() {
   return randomUUID().replace(/-/g, "").slice(0, 10);
 }
 
+// ===== normalize util (shared) =====
 export function normalizeItems(items) {
   const arr = Array.isArray(items) ? items : [];
   const now = Date.now();
@@ -55,27 +56,30 @@ export function normalizeItems(items) {
   });
 }
 
-// choose backend safely
+// ===== choose backend safely (dynamic import) =====
 let STORE = memStore;
-(function initStore() {
+
+(async function initStore() {
   const wantRedis = String(process.env.FB_USE_REDIS || "").toLowerCase().trim() === "true";
   const hasUrl = !!process.env.REDIS_URL;
 
   if (wantRedis && hasUrl) {
     try {
+      // dynamic import only when we truly need it
+      const { makeRedisCartStore } = await import("./cart-redis.js");
       const r = makeRedisCartStore();
       STORE = r;
       log("cart_store_backend", { backend: r.backend });
+      return;
     } catch (err) {
       log("cart_store_fallback_memory", { reason: String(err?.message || err) });
-      STORE = memStore;
     }
-  } else {
-    STORE = memStore;
-    log("cart_store_backend", { backend: "memory" });
   }
+  STORE = memStore;
+  log("cart_store_backend", { backend: "memory" });
 })();
 
+// stable API
 export const backend = () => STORE.backend;
 export const getCart = (...a) => STORE.getCart(...a);
 export const upsertCart = (...a) => STORE.upsertCart(...a);
