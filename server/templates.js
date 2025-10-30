@@ -1,5 +1,4 @@
-// server/templates.js (ESM, full file)
-
+// server/templates.js (ESM, full)
 function escapeHtml(s = "") {
   return String(s)
     .replace(/&/g, "&amp;")
