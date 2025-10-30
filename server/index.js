@@ -1,4 +1,4 @@
-﻿import "dotenv/config";
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import nodemailer from "nodemailer";
@@ -25,13 +25,14 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "2mb" }));
 
-/** DEBUG: show commit and mounted routes */
-const COMMIT = process.env.RENDER_GIT_COMMIT
-  || process.env.VERCEL_GIT_COMMIT_SHA
-  || process.env.GIT_COMMIT
-  || "local";
+/** DEBUG: commit */
+const COMMIT =
+  process.env.RENDER_GIT_COMMIT ||
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  process.env.GIT_COMMIT ||
+  "local";
 
-/** --- Real routes MUST come BEFORE the 404 catch-all --- */
+/** --- Real routes BEFORE 404 catch-all --- */
 
 // Health
 app.get("/api/health", (_req, res) => {
@@ -84,9 +85,9 @@ app.post("/api/email/send", async (req, res) => {
   }
 });
 
-// Debug: which file is actually running?
+// Debug: which file is running?
 app.get("/api/_debug/whoami", (_req, res) => {
-  res.json({ ok: true, file: import.meta.url, ts: new Date().toISOString() });
+  res.json({ ok: true, file: import.meta.url, commit: COMMIT, ts: new Date().toISOString() });
 });
 
 // Debug: list mounted routes
@@ -111,6 +112,27 @@ app.get("/api/_debug/info", (_req, res) => {
   }
 });
 
+// Ping (super quick uptime)
+app.get("/api/ping", (_req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+// Sanitized runtime config (no secrets)
+app.get("/api/config", (_req, res) => {
+  const safe = {
+    ok: true,
+    commit: COMMIT,
+    version: process.env.APP_VERSION || "unset",
+    node: process.version,
+    port: process.env.PORT || 10000,
+    FRONTEND_ORIGIN: process.env.FRONTEND_ORIGIN || "https://foodbridgeapp.github.io",
+    SMTP_HOST: process.env.SMTP_HOST || "smtp.gmail.com",
+    SMTP_PORT: Number(process.env.SMTP_PORT || 587),
+    SMTP_SECURE: String(process.env.SMTP_SECURE || "false") === "true",
+  };
+  res.json(safe);
+});
+
 /** --- 404 fallback MUST be last --- */
 app.use("/api", (_req, res) => {
   res.status(404).json({ ok: false, error: "API route not found" });
@@ -119,16 +141,4 @@ app.use("/api", (_req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`FoodBridge server listening on port ${PORT}`);
-});
-app.get('/api/_debug/routes', (_req,res) => {
-  try {
-    const stack = (app._router && app._router.stack) || [];
-    const routes = [];
-    for (const s of stack) {
-      if (s.route?.path) routes.push({ path: s.route.path, methods: Object.keys(s.route.methods||{}) });
-    }
-    res.json({ ok:true, routes });
-  } catch (e) {
-    res.status(500).json({ ok:false, error: String(e?.message||e) });
-  }
 });
