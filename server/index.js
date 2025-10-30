@@ -73,4 +73,80 @@ async function getTransporter() {
   const port = Number(process.env.SMTP_PORT || 587);
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
-  const secure = String(process.env.SMTP_SECURE || "")_
+  const secure = String(process.env.SMTP_SECURE || "").toLowerCase() === "true"; // true for 465
+
+  if (!host) throw new Error("SMTP_HOST not set");
+  if (!user) throw new Error("SMTP_USER not set");
+  if (!pass) throw new Error("SMTP_PASS not set");
+
+  _transporter = nodemailer.createTransport({ host, port, secure, auth: { user, pass } });
+  return _transporter;
+}
+
+function isValidEmail(e) {
+  return typeof e === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
+}
+
+/* =========================
+   Routes
+   ========================= */
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, status: "healthy", ts: Date.now() });
+});
+
+app.get("/api/version", (req, res) => {
+  res.json({
+    ok: true,
+    version: VERSION,
+    commit: COMMIT || null,
+    shortCommit: SHORT_COMMIT,
+    startedAt: STARTED_AT,
+  });
+});
+
+app.get("/api/email/health", async (req, res) => {
+  const emailConfigured = !!process.env.SMTP_HOST && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
+  // Optional: try verify() without throwing
+  let verified = false;
+  if (emailConfigured) {
+    try {
+      const t = await getTransporter();
+      await t.verify();
+      verified = true;
+    } catch {
+      verified = false;
+    }
+  }
+  res.json({
+    ok: emailConfigured && verified,
+    configured: emailConfigured,
+    verified,
+    ts: Date.now(),
+  });
+});
+
+app.get("/api/_debug/whoami", (req, res) => {
+  res.json({
+    ok: true,
+    userAgent: req.headers["user-agent"],
+    ip: req.ip,
+    ts: Date.now(),
+  });
+});
+
+app.get("/api/_debug/info", (req, res) => {
+  res.json({
+    ok: true,
+    env: process.env.NODE_ENV || "development",
+    region: process.env.RENDER_REGION || null,
+    commit: COMMIT || null,
+    shortCommit: SHORT_COMMIT,
+    ts: Date.now(),
+  });
+});
+
+app.get("/api/ping", (req, res) => {
+  res.json({ ok: true, pong: true, ts: Date.now() });
+});
+
+app.get("/api/config", (req,
