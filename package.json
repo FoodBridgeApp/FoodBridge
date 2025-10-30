@@ -1,16 +1,18 @@
-﻿{
+{
   "name": "foodbridge-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=20 <23" },
   "scripts": {
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "start:server": "node server/index.js",
+    "build": "echo \"(no-op) backend only\"",
+    "postinstall": "echo \"postinstall done\""
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "nodemailer": "^6.9.13"
+    "express": "^4.21.1",
+    "nodemailer": "^6.9.15"
   }
 }
