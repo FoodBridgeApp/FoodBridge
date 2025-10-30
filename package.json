@@ -1,11 +1,12 @@
-{
+﻿{
   "name": "foodbridge-server",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "engines": { "node": "20.x" },
   "scripts": {
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
