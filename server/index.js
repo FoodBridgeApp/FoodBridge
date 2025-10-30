@@ -1,8 +1,9 @@
-// server/index.js  (ESM, stable, email send, no extra deps)
+// server/index.js  (ESM, structured logging + email send + demo ingest)
 
 import express from "express";
 import cors from "cors";
 import nodemailer from "nodemailer";
+import { requestLogger, log } from "./logger.js";
 
 const app = express();
 
@@ -20,7 +21,7 @@ const VERSION = COMMIT || "dev-local";
 // Allowed UI origins (adjust if you add more)
 const ALLOW_ORIGINS = [
   "https://foodbridgeapp.github.io",
-  "https://foodbridgeapp.github.io/FoodBridge",
+  "https://foodbridgeapp.github.io/FoodBridge"
 ];
 
 /* =========================
@@ -37,16 +38,25 @@ app.use(
   })
 );
 
-// keep request body reasonable
 app.use(express.json({ limit: "256kb" }));
+
+// Security-ish headers (no extra deps)
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-DNS-Prefetch-Control", "off");
+  next();
+});
+
+// Structured request logs with correlation IDs
+app.use(requestLogger());
 
 /* =========================
    Utilities
    ========================= */
-const log = (msg, extra = {}) =>
-  console.log(JSON.stringify({ level: "info", msg, ...extra }));
 
-// Very small in-memory limiter for /api/email/send (per-IP)
+// tiny in-memory limiter for /api/email/send (per-IP)
 const emailLimiter = (() => {
   const bucket = new Map(); // ip -> { count, resetAt }
   const WINDOW_MS = 60_000; // 1 minute
@@ -95,7 +105,7 @@ function isValidEmail(e) {
    Routes
    ========================= */
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, status: "healthy", ts: Date.now() });
+  res.json({ ok: true, status: "healthy", ts: Date.now(), reqId: req.id });
 });
 
 app.get("/api/version", (req, res) => {
@@ -105,6 +115,7 @@ app.get("/api/version", (req, res) => {
     commit: COMMIT || null,
     shortCommit: SHORT_COMMIT,
     startedAt: STARTED_AT,
+    reqId: req.id,
   });
 });
 
@@ -127,6 +138,7 @@ app.get("/api/email/health", async (req, res) => {
     configured: emailConfigured,
     verified,
     ts: Date.now(),
+    reqId: req.id,
   });
 });
 
@@ -135,6 +147,18 @@ app.get("/api/_debug/whoami", (req, res) => {
     ok: true,
     userAgent: req.headers["user-agent"],
     ip: req.ip,
+    reqId: req.id,
+    ts: Date.now(),
+  });
+});
+
+// echo body for client debugging
+app.post("/api/_debug/echo", (req, res) => {
+  res.json({
+    ok: true,
+    reqId: req.id,
+    headers: req.headers,
+    body: req.body,
     ts: Date.now(),
   });
 });
@@ -146,12 +170,13 @@ app.get("/api/_debug/info", (req, res) => {
     region: process.env.RENDER_REGION || null,
     commit: COMMIT || null,
     shortCommit: SHORT_COMMIT,
+    reqId: req.id,
     ts: Date.now(),
   });
 });
 
 app.get("/api/ping", (req, res) => {
-  res.json({ ok: true, pong: true, ts: Date.now() });
+  res.json({ ok: true, pong: true, ts: Date.now(), reqId: req.id });
 });
 
 app.get("/api/config", (req, res) => {
@@ -167,6 +192,7 @@ app.get("/api/config", (req, res) => {
       demoIngest: true,
       emailEnabled: !!process.env.SMTP_HOST,
     },
+    reqId: req.id,
   });
 });
 
@@ -179,27 +205,30 @@ app.get("/api/status", (req, res) => {
     shortCommit: SHORT_COMMIT,
     emailReady: !!process.env.SMTP_HOST,
     startedAt: STARTED_AT,
+    reqId: req.id,
   });
 });
 
-// Send Email
+/* =========================
+   Send Email
+   ========================= */
 app.post("/api/email/send", async (req, res) => {
   try {
     const ip = req.ip || "unknown";
     const gate = emailLimiter(ip);
     if (!gate.allowed) {
-      return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt });
+      return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt, reqId: req.id });
     }
 
     const { to, subject, text, html, from } = req.body || {};
     if (!isValidEmail(to)) {
-      return res.status(400).json({ ok: false, error: "invalid_to" });
+      return res.status(400).json({ ok: false, error: "invalid_to", reqId: req.id });
     }
     if (!subject || typeof subject !== "string") {
-      return res.status(400).json({ ok: false, error: "invalid_subject" });
+      return res.status(400).json({ ok: false, error: "invalid_subject", reqId: req.id });
     }
     if (!text && !html) {
-      return res.status(400).json({ ok: false, error: "missing_body" });
+      return res.status(400).json({ ok: false, error: "missing_body", reqId: req.id });
     }
 
     const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
@@ -219,18 +248,86 @@ app.post("/api/email/send", async (req, res) => {
       accepted: info.accepted || [],
       rejected: info.rejected || [],
       response: info.response || null,
+      reqId: req.id,
     });
   } catch (err) {
-    log("email_send_error", { error: String(err?.message || err) });
-    res.status(500).json({ ok: false, error: "send_failed" });
+    log("email_send_error", { error: String(err?.message || err), reqId: req.id });
+    res.status(500).json({ ok: false, error: "send_failed", reqId: req.id });
   }
+});
+
+/* =========================
+   Demo Ingest (NEW)
+   ========================= */
+/**
+ * Accepts a lightweight payload and returns a normalized “ingest” result.
+ * This is SAFE and does not touch external systems. Use it to wire your UI.
+ *
+ * Example payload:
+ * {
+ *   "userId": "abc123",
+ *   "items": [
+ *     {"type": "recipe", "title": "Chicken Pasta", "sourceUrl":"https://..."},
+ *     {"type": "audio", "title": "Notes 10/29", "durationSec": 42}
+ *   ],
+ *   "tags": ["demo","cart"],
+ *   "cartId": "optional-cart-id"
+ * }
+ */
+app.post("/api/ingest/demo", (req, res) => {
+  const reqId = req.id;
+  const body = req.body || {};
+  const items = Array.isArray(body.items) ? body.items : [];
+  const userId = String(body.userId || "guest");
+  const cartId = body.cartId ? String(body.cartId) : null;
+  const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
+
+  // Normalize items
+  const normalized = items.map((it, idx) => {
+    const type = String(it?.type || "unknown").toLowerCase();
+    const title = String(it?.title || `item-${idx + 1}`);
+    const sourceUrl = it?.sourceUrl ? String(it.sourceUrl) : null;
+    const durationSec = typeof it?.durationSec === "number" ? it.durationSec : null;
+
+    return {
+      id: `${Date.now()}-${idx}`,
+      type,
+      title,
+      sourceUrl,
+      durationSec,
+      addedAt: new Date().toISOString(),
+    };
+  });
+
+  const counters = normalized.reduce(
+    (acc, n) => {
+      acc.total += 1;
+      acc.byType[n.type] = (acc.byType[n.type] || 0) + 1;
+      return acc;
+    },
+    { total: 0, byType: {} }
+  );
+
+  const result = {
+    ok: true,
+    reqId,
+    userId,
+    cartId,
+    tags,
+    counts: counters,
+    items: normalized,
+    receivedAt: Date.now(),
+  };
+
+  log("demo_ingest_ok", { reqId, userId, totalItems: counters.total, cartId });
+  res.json(result);
 });
 
 /* =========================
    404 + Error handler
    ========================= */
 app.use((req, res) => {
-  res.status(404).json({ ok: false, error: "not_found" });
+  res.status(404).json({ ok: false, error: "not_found", reqId: req.id || null });
 });
 
 /* =========================
