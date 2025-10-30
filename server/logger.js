@@ -1,7 +1,4 @@
 // server/logger.js
-// Structured request logger with correlation IDs, health-ping suppression, and header redaction.
-// Uses node:crypto randomUUID (no uuid dependency).
-
 import { randomUUID } from "node:crypto";
 
 /**
@@ -10,9 +7,9 @@ import { randomUUID } from "node:crypto";
  * - optional suppression of health/infra probes
  * - simple header redaction
  *
- * Configure via env:
- *   LOG_HEALTH_PINGS=false|true       (default: true → we DO log health pings)
- *   LOG_SAMPLE=1                      (log every Nth request; default 1)
+ * Env:
+ *   LOG_HEALTH_PINGS=false|true  (default true → do log health pings)
+ *   LOG_SAMPLE=1                 (log every Nth request; default 1)
  *   LOG_REDACT_HEADERS=authorization,cookie
  */
 export function requestLogger() {
@@ -20,22 +17,18 @@ export function requestLogger() {
   const sampleN = clampInt(process.env.LOG_SAMPLE, 1, 1, 1_000_000);
   const redactList = parseList(process.env.LOG_REDACT_HEADERS, ["authorization", "cookie"]);
 
-  // Health paths and infra user agents to quiet
   const healthPaths = new Set(["/api/health", "/"]);
   const infraUA = [/^Render\/1\.0$/i, /^Go-http-client\/2\.0$/i];
 
   return function (req, res, next) {
-    // sampling
-    if (sampleN > 1 && Math.floor(Math.random() * sampleN) !== 0) {
-      return next();
-    }
+    if (sampleN > 1 && Math.floor(Math.random() * sampleN) !== 0) return next();
 
     // correlation id
     const reqId = req.headers["x-request-id"] || randomUUID();
     req.id = String(reqId);
 
     const start = process.hrtime.bigint();
-    const metaBase = {
+    const meta = {
       reqId: req.id,
       method: req.method,
       path: req.originalUrl || req.url,
@@ -43,27 +36,22 @@ export function requestLogger() {
       ua: req.headers["user-agent"] || null,
     };
 
-    const isInfraUA = (metaBase.ua && infraUA.some((re) => re.test(metaBase.ua))) || false;
-    const isHealthPath = healthPaths.has(stripQuery(metaBase.path));
-    const isHeadRoot = req.method === "HEAD" && stripQuery(metaBase.path) === "/";
-
-    // Decide whether to log start/done
+    const isInfraUA = (meta.ua && infraUA.some((re) => re.test(meta.ua))) || false;
+    const isHealthPath = healthPaths.has(stripQuery(meta.path));
+    const isHeadRoot = req.method === "HEAD" && stripQuery(meta.path) === "/";
     const suppress = (!logHealth && (isHealthPath || isHeadRoot || isInfraUA));
 
-    if (!suppress) {
-      console.log(JSON.stringify({ level: "info", msg: "req_start", ...metaBase }));
-    }
+    if (!suppress) console.log(JSON.stringify({ level: "info", msg: "req_start", ...meta }));
 
     res.on("finish", () => {
       const end = process.hrtime.bigint();
       const durMs = Number(end - start) / 1e6;
-
       if (!suppress) {
         console.log(
           JSON.stringify({
             level: "info",
             msg: "req_done",
-            ...metaBase,
+            ...meta,
             status: res.statusCode,
             ms: Math.round(durMs),
           })
@@ -71,10 +59,9 @@ export function requestLogger() {
       }
     });
 
-    // propagate id
     res.setHeader("x-request-id", req.id);
 
-    // Minimal header redaction in request object (if someone logs req.headers later)
+    // redact a couple of sensitive headers on the request object
     redactList.forEach((h) => {
       if (req.headers[h]) req.headers[h] = "***redacted***";
     });
@@ -86,7 +73,7 @@ export function requestLogger() {
 export const log = (msg, extra = {}) =>
   console.log(JSON.stringify({ level: "info", msg, ...extra }));
 
-/* ========== helpers ========== */
+/* helpers */
 function stripQuery(p) {
   const i = p.indexOf("?");
   return i === -1 ? p : p.slice(0, i);
