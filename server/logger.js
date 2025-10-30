@@ -1,16 +1,20 @@
-// server/logger.js (ESM, full file)
-// Structured request logger with:
-// - correlation IDs
-// - optional suppression of health/infra probes
-// - simple header redaction
-//
-// Configure via env:
-//   LOG_HEALTH_PINGS=false|true       (default: true → we DO log health pings)
-//   LOG_SAMPLE=1                      (log every Nth request; default 1)
-//   LOG_REDACT_HEADERS=authorization,cookie
+// server/logger.js
+// Structured request logger with correlation IDs, health-ping suppression, and header redaction.
+// Uses node:crypto randomUUID (no uuid dependency).
 
 import { randomUUID } from "node:crypto";
 
+/**
+ * Structured request logger with:
+ * - correlation IDs
+ * - optional suppression of health/infra probes
+ * - simple header redaction
+ *
+ * Configure via env:
+ *   LOG_HEALTH_PINGS=false|true       (default: true → we DO log health pings)
+ *   LOG_SAMPLE=1                      (log every Nth request; default 1)
+ *   LOG_REDACT_HEADERS=authorization,cookie
+ */
 export function requestLogger() {
   const logHealth = parseBool(process.env.LOG_HEALTH_PINGS, true);
   const sampleN = clampInt(process.env.LOG_SAMPLE, 1, 1, 1_000_000);
@@ -26,7 +30,7 @@ export function requestLogger() {
       return next();
     }
 
-    // correlation id (use inbound header if provided, else generate)
+    // correlation id
     const reqId = req.headers["x-request-id"] || randomUUID();
     req.id = String(reqId);
 
@@ -47,7 +51,7 @@ export function requestLogger() {
     const suppress = (!logHealth && (isHealthPath || isHeadRoot || isInfraUA));
 
     if (!suppress) {
-      safeLog({ level: "info", msg: "req_start", ...metaBase });
+      console.log(JSON.stringify({ level: "info", msg: "req_start", ...metaBase }));
     }
 
     res.on("finish", () => {
@@ -55,13 +59,15 @@ export function requestLogger() {
       const durMs = Number(end - start) / 1e6;
 
       if (!suppress) {
-        safeLog({
-          level: "info",
-          msg: "req_done",
-          ...metaBase,
-          status: res.statusCode,
-          ms: Math.round(durMs),
-        });
+        console.log(
+          JSON.stringify({
+            level: "info",
+            msg: "req_done",
+            ...metaBase,
+            status: res.statusCode,
+            ms: Math.round(durMs),
+          })
+        );
       }
     });
 
@@ -77,18 +83,10 @@ export function requestLogger() {
   };
 }
 
-export const log = (msg, extra = {}) => safeLog({ level: "info", msg, ...extra });
+export const log = (msg, extra = {}) =>
+  console.log(JSON.stringify({ level: "info", msg, ...extra }));
 
 /* ========== helpers ========== */
-function safeLog(obj) {
-  try {
-    console.log(JSON.stringify(obj));
-  } catch {
-    // extremely defensive fallback
-    console.log('{"level":"info","msg":"log_fallback"}');
-  }
-}
-
 function stripQuery(p) {
   const i = p.indexOf("?");
   return i === -1 ? p : p.slice(0, i);
