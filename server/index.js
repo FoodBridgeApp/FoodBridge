@@ -1,4 +1,4 @@
-// server/index.js  (ESM, structured logging + email send + demo ingest)
+// server/index.js  (ESM, structured logging + email + demo ingest + quiet health logs)
 
 import express from "express";
 import cors from "cors";
@@ -21,7 +21,7 @@ const VERSION = COMMIT || "dev-local";
 // Allowed UI origins (adjust if you add more)
 const ALLOW_ORIGINS = [
   "https://foodbridgeapp.github.io",
-  "https://foodbridgeapp.github.io/FoodBridge"
+  "https://foodbridgeapp.github.io/FoodBridge",
 ];
 
 /* =========================
@@ -40,7 +40,7 @@ app.use(
 
 app.use(express.json({ limit: "256kb" }));
 
-// Security-ish headers (no extra deps)
+// Security-ish headers
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -49,7 +49,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Structured request logs with correlation IDs
+// Structured request logs with correlation IDs (now suppresses health spam by default)
 app.use(requestLogger());
 
 /* =========================
@@ -60,7 +60,7 @@ app.use(requestLogger());
 const emailLimiter = (() => {
   const bucket = new Map(); // ip -> { count, resetAt }
   const WINDOW_MS = 60_000; // 1 minute
-  const MAX = 20;           // 20 req / minute per IP
+  const MAX = 20; // 20 req / minute per IP
   return (ip) => {
     const now = Date.now();
     const cur = bucket.get(ip) || { count: 0, resetAt: now + WINDOW_MS };
@@ -102,7 +102,23 @@ function isValidEmail(e) {
 }
 
 /* =========================
-   Routes
+   Basic root endpoints (avoid 404s on probes)
+   ========================= */
+app.head("/", (req, res) => res.status(204).end());
+app.get("/", (req, res) => {
+  res.json({
+    ok: true,
+    service: "foodbridge-server",
+    version: VERSION,
+    shortCommit: SHORT_COMMIT,
+    startedAt: STARTED_AT,
+    hint: "See /api/health, /api/config, /api/ping",
+    reqId: req.id,
+  });
+});
+
+/* =========================
+   API routes
    ========================= */
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, status: "healthy", ts: Date.now(), reqId: req.id });
@@ -257,23 +273,8 @@ app.post("/api/email/send", async (req, res) => {
 });
 
 /* =========================
-   Demo Ingest (NEW)
+   Demo Ingest
    ========================= */
-/**
- * Accepts a lightweight payload and returns a normalized “ingest” result.
- * This is SAFE and does not touch external systems. Use it to wire your UI.
- *
- * Example payload:
- * {
- *   "userId": "abc123",
- *   "items": [
- *     {"type": "recipe", "title": "Chicken Pasta", "sourceUrl":"https://..."},
- *     {"type": "audio", "title": "Notes 10/29", "durationSec": 42}
- *   ],
- *   "tags": ["demo","cart"],
- *   "cartId": "optional-cart-id"
- * }
- */
 app.post("/api/ingest/demo", (req, res) => {
   const reqId = req.id;
   const body = req.body || {};
@@ -282,7 +283,6 @@ app.post("/api/ingest/demo", (req, res) => {
   const cartId = body.cartId ? String(body.cartId) : null;
   const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
 
-  // Normalize items
   const normalized = items.map((it, idx) => {
     const type = String(it?.type || "unknown").toLowerCase();
     const title = String(it?.title || `item-${idx + 1}`);
