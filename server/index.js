@@ -1,4 +1,4 @@
-// server/index.js  (ESM, stable commit/version handling, no external rate-limit deps)
+// server/index.js  (ESM, stable, email send, no extra deps)
 
 import express from "express";
 import cors from "cors";
@@ -60,11 +60,15 @@ const emailLimiter = (() => {
     }
     cur.count += 1;
     bucket.set(ip, cur);
-    return { allowed: cur.count <= MAX, remaining: Math.max(0, MAX - cur.count), resetAt: cur.resetAt };
+    return {
+      allowed: cur.count <= MAX,
+      remaining: Math.max(0, MAX - cur.count),
+      resetAt: cur.resetAt,
+    };
   };
 })();
 
-// Create transporter lazily (at first send) so boot is fast
+// Lazy SMTP transporter
 let _transporter = null;
 async function getTransporter() {
   if (_transporter) return _transporter;
@@ -105,8 +109,9 @@ app.get("/api/version", (req, res) => {
 });
 
 app.get("/api/email/health", async (req, res) => {
-  const emailConfigured = !!process.env.SMTP_HOST && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
-  // Optional: try verify() without throwing
+  const emailConfigured =
+    !!process.env.SMTP_HOST && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
+
   let verified = false;
   if (emailConfigured) {
     try {
@@ -149,4 +154,93 @@ app.get("/api/ping", (req, res) => {
   res.json({ ok: true, pong: true, ts: Date.now() });
 });
 
-app.get("/api/config", (req,
+app.get("/api/config", (req, res) => {
+  res.json({
+    ok: true,
+    version: VERSION,
+    nodeEnv: process.env.NODE_ENV || "development",
+    startedAt: STARTED_AT,
+    region: process.env.RENDER_REGION || null,
+    commit: COMMIT || null,
+    shortCommit: SHORT_COMMIT,
+    features: {
+      demoIngest: true,
+      emailEnabled: !!process.env.SMTP_HOST,
+    },
+  });
+});
+
+app.get("/api/status", (req, res) => {
+  res.json({
+    ok: true,
+    uptimeSec: process.uptime(),
+    version: VERSION,
+    commit: COMMIT || null,
+    shortCommit: SHORT_COMMIT,
+    emailReady: !!process.env.SMTP_HOST,
+    startedAt: STARTED_AT,
+  });
+});
+
+// Send Email
+app.post("/api/email/send", async (req, res) => {
+  try {
+    const ip = req.ip || "unknown";
+    const gate = emailLimiter(ip);
+    if (!gate.allowed) {
+      return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt });
+    }
+
+    const { to, subject, text, html, from } = req.body || {};
+    if (!isValidEmail(to)) {
+      return res.status(400).json({ ok: false, error: "invalid_to" });
+    }
+    if (!subject || typeof subject !== "string") {
+      return res.status(400).json({ ok: false, error: "invalid_subject" });
+    }
+    if (!text && !html) {
+      return res.status(400).json({ ok: false, error: "missing_body" });
+    }
+
+    const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
+
+    const t = await getTransporter();
+    const info = await t.sendMail({
+      from: sender,
+      to,
+      subject,
+      text: text || undefined,
+      html: html || undefined,
+    });
+
+    res.json({
+      ok: true,
+      messageId: info.messageId || null,
+      accepted: info.accepted || [],
+      rejected: info.rejected || [],
+      response: info.response || null,
+    });
+  } catch (err) {
+    log("email_send_error", { error: String(err?.message || err) });
+    res.status(500).json({ ok: false, error: "send_failed" });
+  }
+});
+
+/* =========================
+   404 + Error handler
+   ========================= */
+app.use((req, res) => {
+  res.status(404).json({ ok: false, error: "not_found" });
+});
+
+/* =========================
+   Start server
+   ========================= */
+app.listen(PORT, () => {
+  log("listening", {
+    port: String(PORT),
+    version: VERSION,
+    commit: COMMIT,
+    shortCommit: SHORT_COMMIT,
+  });
+});
