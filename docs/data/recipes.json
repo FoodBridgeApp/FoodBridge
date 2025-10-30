@@ -1,0 +1,35 @@
+﻿[
+  {
+    "id": "bk1-r001",
+    "book": "Vegan Essentials",
+    "title": "Smoky Lentil Bolognese",
+    "sourceUrl": "https://example.com/vegan-essentials/smoky-lentil-bolognese",
+    "durationSec": 2400,
+    "tags": ["vegan","pasta","lentil"],
+    "note": "High-protein vegan main"
+  },
+  {
+    "id": "bk1-r002",
+    "book": "Vegan Essentials",
+    "title": "Roasted Cauliflower Tacos",
+    "sourceUrl": "https://example.com/vegan-essentials/roasted-cauliflower-tacos",
+    "durationSec": 1800,
+    "tags": ["vegan","tacos","weeknight"]
+  },
+  {
+    "id": "bk2-r001",
+    "book": "Mediterranean Home",
+    "title": "Chicken with Olives & Lemon",
+    "sourceUrl": "https://example.com/med-home/chicken-olives-lemon",
+    "durationSec": 2700,
+    "tags": ["mediterranean","chicken","gluten-free"]
+  },
+  {
+    "id": "bk3-r010",
+    "book": "Quick Weeknight Pasta",
+    "title": "Pasta alla Whatever",
+    "sourceUrl": "https://example.com/quick-pasta/pasta-alla-whatever",
+    "durationSec": 900,
+    "tags": ["pasta","quick","weeknight"]
+  }
+]

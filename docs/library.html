@@ -1,0 +1,76 @@
+﻿<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>FoodBridge — Recipe Library</title>
+  <meta name="viewport" content="width=device-width" />
+  <style>
+    :root { --bd:#e5e7eb; --fg:#111; --muted:#6b7280; --bg:#fff; --chip:#f3f4f6; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background:#fafafa; margin:24px; }
+    .wrap { max-width: 1000px; margin:0 auto; }
+    h1 { margin:0 0 12px; }
+    .card { background:var(--bg); border:1px solid var(--bd); border-radius:12px; padding:16px; margin:12px 0; }
+    .row { display:grid; gap:10px; grid-template-columns: 1fr 1fr 1fr; }
+    input, select { width:100%; padding:10px; border:1px solid var(--bd); border-radius:10px; }
+    .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
+    .btn { padding:8px 12px; border:1px solid var(--bd); background:#fff; border-radius:10px; cursor:pointer; }
+    .btn:hover { background:#f9fafb; }
+    .muted { color:var(--muted); font-size:12px; }
+    .grid { display:grid; gap:12px; grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .item { border:1px solid var(--bd); border-radius:12px; padding:12px; background:#fff; display:flex; flex-direction:column; gap:8px; }
+    .chips { display:flex; gap:6px; flex-wrap:wrap; }
+    .chip { display:inline-block; background:var(--chip); padding:4px 8px; border-radius:999px; font-size:12px; }
+    .head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .right { text-align:right; }
+    .sticky { position:sticky; top:0; background:#fafafa; padding-bottom:8px; z-index:5; }
+    .status { font-size:12px; }
+    pre { background:#f6f8fa; padding:10px; border-radius:10px; max-height:320px; overflow:auto; }
+    @media (max-width: 860px){ .row { grid-template-columns: 1fr; } .grid { grid-template-columns: 1fr; } }
+  </style>
+  <script>
+    // Points the client at your server
+    window.__FB_API_BASE__ = "https://foodbridge-server-rv0a.onrender.com";
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="sticky">
+      <h1>Recipe Library</h1>
+      <div class="card">
+        <div class="row">
+          <div>
+            <label>Search</label>
+            <input data-field="q" placeholder="title, tag…" />
+          </div>
+          <div>
+            <label>Book</label>
+            <select data-field="book"><option value="">(all)</option></select>
+          </div>
+          <div>
+            <label>Max Duration (minutes)</label>
+            <input data-field="maxMin" placeholder="e.g. 30" />
+          </div>
+        </div>
+        <div class="toolbar">
+          <button class="btn" data-btn="refresh">Refresh</button>
+          <button class="btn" data-btn="loadCart">Load Cart</button>
+          <span class="chip">Cart ID: <span data-out="cartId">(none)</span></span>
+          <span class="status" data-out="status"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="grid" data-out="grid"></div>
+    </div>
+
+    <div class="card">
+      <h3>Raw Output</h3>
+      <pre data-out="raw">(results appear here)</pre>
+    </div>
+  </div>
+
+  <script type="module" src="./js/api.js"></script>
+  <script type="module" src="./js/library.js"></script>
+</body>
+</html>
