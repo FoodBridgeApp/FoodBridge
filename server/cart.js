@@ -1,194 +1,96 @@
-Windows PowerShell
-Copyright (C) Microsoft Corporation. All rights reserved.
+// server/cart.js (ESM)
+// In-memory cart store + helpers. Persist only for demo/server memory.
 
-Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
+const carts = new Map();
 
-PS C:\Users\Tetra> # reset vars
-PS C:\Users\Tetra> Remove-Variable BASE, r, json, cartId -ErrorAction SilentlyContinue
-PS C:\Users\Tetra> $ErrorActionPreference = "Stop"
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> # 0) Base + health
-PS C:\Users\Tetra> $BASE = 'https://foodbridge-server-rv0a.onrender.com'
-PS C:\Users\Tetra> iwr "$BASE/api/health"
+function newId() {
+  // 10-char base36 random-ish
+  return Math.random().toString(36).slice(2, 12);
+}
 
+export function normalizeItems(items = []) {
+  const nowISO = new Date().toISOString();
+  return items
+    .filter(Boolean)
+    .map((raw, idx) => {
+      const type = String(raw.type || "unknown").toLowerCase();
+      const title = String(raw.title || `item-${idx + 1}`);
+      const sourceUrl = raw.sourceUrl ? String(raw.sourceUrl) : null;
+      const durationSec =
+        raw.durationSec !== undefined && raw.durationSec !== null
+          ? Number(raw.durationSec)
+          : null;
 
-StatusCode        : 200
-StatusDescription : OK
-Content           : {"ok":true,"status":"healthy","ts":1761804051872,"reqId":"410c27b6-3d67-4d03-9e5c-8b19d342c
-                    3ec"}
-RawContent        : HTTP/1.1 200 OK
-                    Transfer-Encoding: chunked
-                    Connection: keep-alive
-                    CF-RAY: 9968b1db7b4e2af0-LAX
-                    access-control-allow-credentials: true
-                    referrer-policy: no-referrer
-                    rndr-id: 241ea72f-b0af-4117
-                    va...
-Forms             : {}
-Headers           : {[Transfer-Encoding, chunked], [Connection, keep-alive], [CF-RAY, 9968b1db7b4e2af0-LAX],
-                    [access-control-allow-credentials, true]...}
-Images            : {}
-InputFields       : {}
-Links             : {}
-ParsedHtml        : mshtml.HTMLDocumentClass
-RawContentLength  : 96
+      return {
+        id: `${Date.now()}-${newId()}-${idx}`,
+        type,
+        title,
+        sourceUrl,
+        durationSec,
+        addedAt: nowISO,
+      };
+    });
+}
 
+export function upsertCart({ cartId, userId, items = [] }) {
+  const id = cartId || `${userId}-${newId()}`;
+  const existing = carts.get(id);
+  if (!existing) {
+    const cart = { cartId: id, userId, items: [] };
+    if (Array.isArray(items) && items.length) cart.items.push(...items);
+    carts.set(id, cart);
+    return cart;
+  }
+  // merge: replace userId if changed; append items
+  existing.userId = userId;
+  if (Array.isArray(items) && items.length) existing.items.push(...items);
+  return existing;
+}
 
+export function appendItemsToCart({ cartId, userId, items = [] }) {
+  const cart = carts.get(cartId) || { cartId, userId, items: [] };
+  if (!carts.has(cartId)) carts.set(cartId, cart);
+  if (Array.isArray(items) && items.length) cart.items.push(...items);
+  return cart;
+}
 
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> # (optional) verify features are present in this deploy
-PS C:\Users\Tetra> ($cfg = (iwr "$BASE/api/config").Content | ConvertFrom-Json).features
+export function getCart(cartId) {
+  return carts.get(cartId) || null;
+}
 
+export function deleteCart(cartId) {
+  return carts.delete(cartId);
+}
 
-demoIngest       : True
-emailEnabled     : True
-cartApi          : True
-templatedEmail   : True
-cartEmailSummary : True
-cartExportJson   : True
+/* ====== Export helpers ====== */
 
+export function cartToCsv(cart) {
+  // headers
+  const rows = [["id", "type", "title", "sourceUrl", "durationSec", "addedAt"]];
+  for (const it of cart.items) {
+    rows.push([
+      it.id,
+      it.type,
+      it.title?.replace?.(/"/g, '""') ?? "",
+      it.sourceUrl ?? "",
+      it.durationSec ?? "",
+      it.addedAt ?? "",
+    ]);
+  }
+  return rows.map(r => r.map(v => `"${String(v)}"`).join(",")).join("\n");
+}
 
-
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> # 1) Upsert a cart (this returns a fresh cartId)
-PS C:\Users\Tetra> $upsert = @{
->>   userId = "christian"
->>   items  = @(@{ type="recipe"; title="Pesto Pasta" })
->> } | ConvertTo-Json -Depth 5
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> $r    = iwr "$BASE/api/cart/upsert" -Method POST -ContentType "application/json" -Body $upsert
-PS C:\Users\Tetra> $json = $r.Content | ConvertFrom-Json
-PS C:\Users\Tetra> if (-not $json.ok) { $json | Format-List; throw "Upsert failed." }
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> $cartId = $json.cart.cartId
-PS C:\Users\Tetra> $cartId  # show it
-christian-mhd0n73t
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> # 2) Export JSON
-PS C:\Users\Tetra> iwr "$BASE/api/cart/$cartId/export.json"
-
-
-StatusCode        : 200
-StatusDescription : OK
-Content           : {"ok":true,"cart":{"cartId":"christian-mhd0n73t","userId":"christian","items":[{"id":"17618
-                    04052409-9nhxky-0","type":"recipe","title":"Pesto
-                    Pasta","sourceUrl":null,"durationSec":null,"addedAt":"2025-...
-RawContent        : HTTP/1.1 200 OK
-                    Transfer-Encoding: chunked
-                    Connection: keep-alive
-                    CF-RAY: 9968b1e09eb62af0-LAX
-                    access-control-allow-credentials: true
-                    referrer-policy: no-referrer
-                    rndr-id: 443f266a-8aa4-45b3
-                    va...
-Forms             : {}
-Headers           : {[Transfer-Encoding, chunked], [Connection, keep-alive], [CF-RAY, 9968b1e09eb62af0-LAX],
-                    [access-control-allow-credentials, true]...}
-Images            : {}
-InputFields       : {}
-Links             : {}
-ParsedHtml        : mshtml.HTMLDocumentClass
-RawContentLength  : 303
-
-
-
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> # 3) Email summary
-PS C:\Users\Tetra> $req = @{
->>   to      = "you@example.com"
->>   subject = "Your FoodBridge Cart (Summary)"
->> } | ConvertTo-Json
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> iwr "$BASE/api/cart/$cartId/email-summary" -Method POST -ContentType "application/json" -Body $req
-
-
-StatusCode        : 200
-StatusDescription : OK
-Content           : {"ok":true,"messageId":"<51eaf741-44f6-9df5-7ffd-ab849d10bce5@gmail.com>","accepted":["you@
-                    example.com"],"rejected":[],"response":"250 2.0.0 OK  1761804053
-                    98e67ed59e1d1-340509727e6sm1185412a91.1 - gs...
-RawContent        : HTTP/1.1 200 OK
-                    Transfer-Encoding: chunked
-                    Connection: keep-alive
-                    CF-RAY: 9968b1e1bf672af0-LAX
-                    access-control-allow-credentials: true
-                    referrer-policy: no-referrer
-                    rndr-id: 60006378-6349-4835
-                    va...
-Forms             : {}
-Headers           : {[Transfer-Encoding, chunked], [Connection, keep-alive], [CF-RAY, 9968b1e1bf672af0-LAX],
-                    [access-control-allow-credentials, true]...}
-Images            : {}
-InputFields       : {}
-Links             : {}
-ParsedHtml        : mshtml.HTMLDocumentClass
-RawContentLength  : 252
-
-
-
-PS C:\Users\Tetra> $BASE = 'https://foodbridge-server-rv0a.onrender.com'
-PS C:\Users\Tetra> $cartId  # should already be set from your earlier run; if not, run the upsert again
-christian-mhd0n73t
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> # 1) Export JSON
-PS C:\Users\Tetra> iwr "$BASE/api/cart/$cartId/export.json"
-
-
-StatusCode        : 200
-StatusDescription : OK
-Content           : {"ok":true,"cart":{"cartId":"christian-mhd0n73t","userId":"christian","items":[{"id":"17618
-                    04052409-9nhxky-0","type":"recipe","title":"Pesto
-                    Pasta","sourceUrl":null,"durationSec":null,"addedAt":"2025-...
-RawContent        : HTTP/1.1 200 OK
-                    Transfer-Encoding: chunked
-                    Connection: keep-alive
-                    CF-RAY: 9968b266bf8a2af0-LAX
-                    access-control-allow-credentials: true
-                    referrer-policy: no-referrer
-                    rndr-id: 1ca9d85b-a8ff-4a3b
-                    va...
-Forms             : {}
-Headers           : {[Transfer-Encoding, chunked], [Connection, keep-alive], [CF-RAY, 9968b266bf8a2af0-LAX],
-                    [access-control-allow-credentials, true]...}
-Images            : {}
-InputFields       : {}
-Links             : {}
-ParsedHtml        : mshtml.HTMLDocumentClass
-RawContentLength  : 303
-
-
-
-PS C:\Users\Tetra>
-PS C:\Users\Tetra> # 2) Email summary
-PS C:\Users\Tetra> $req = @{
->>   to = "you@example.com"
->>   subject = "Your FoodBridge Cart (Summary)"
->> } | ConvertTo-Json
-PS C:\Users\Tetra> iwr "$BASE/api/cart/$cartId/email-summary" -Method POST -ContentType "application/json" -Body $req
-
-
-StatusCode        : 200
-StatusDescription : OK
-Content           : {"ok":true,"messageId":"<21f24d7b-17ae-f5ab-e8b0-8ae71b311d5e@gmail.com>","accepted":["you@
-                    example.com"],"rejected":[],"response":"250 2.0.0 OK  1761804075
-                    d9443c01a7336-29498e46664sm170515495ad.109 -...
-RawContent        : HTTP/1.1 200 OK
-                    Transfer-Encoding: chunked
-                    Connection: keep-alive
-                    CF-RAY: 9968b26798082af0-LAX
-                    access-control-allow-credentials: true
-                    referrer-policy: no-referrer
-                    rndr-id: b2e2e29f-ccb0-4a2c
-                    va...
-Forms             : {}
-Headers           : {[Transfer-Encoding, chunked], [Connection, keep-alive], [CF-RAY, 9968b26798082af0-LAX],
-                    [access-control-allow-credentials, true]...}
-Images            : {}
-InputFields       : {}
-Links             : {}
-ParsedHtml        : mshtml.HTMLDocumentClass
-RawContentLength  : 255
-
-
-
-PS C:\Users\Tetra>
+export function cartToText(cart) {
+  const lines = [];
+  lines.push(`# Cart: ${cart.cartId}`);
+  lines.push(`User: ${cart.userId}`);
+  lines.push(`Items: ${cart.items.length}`);
+  lines.push("");
+  cart.items.forEach((it, i) => {
+    lines.push(`${i + 1}. [${it.type}] ${it.title}`);
+    if (it.sourceUrl) lines.push(`   url: ${it.sourceUrl}`);
+    if (it.durationSec != null) lines.push(`   durationSec: ${it.durationSec}`);
+    lines.push(`   addedAt: ${it.addedAt}`);
+  });
+  return lines.join("\n");
+}
