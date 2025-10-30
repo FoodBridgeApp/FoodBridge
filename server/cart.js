@@ -1,96 +1,105 @@
 // server/cart.js (ESM)
-// In-memory cart store + helpers. Persist only for demo/server memory.
+// Chooses Redis or Memory store automatically, with safe fallback.
+// Exposes: getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems, backend
 
-const carts = new Map();
+import { randomUUID } from "node:crypto";
+import { log } from "./logger.js";
+import { makeRedisCartStore } from "./cart-redis.js";
 
-function newId() {
-  // 10-char base36 random-ish
-  return Math.random().toString(36).slice(2, 12);
+// ===== In-memory fallback =====
+const memDB = new Map();
+
+const memStore = {
+  get backend() {
+    return "memory";
+  },
+  async getCart(cartId) {
+    return memDB.get(String(cartId)) || null;
+  },
+  async upsertCart({ cartId, userId, items = [] }) {
+    const id = cartId ? String(cartId) : `${String(userId)}-${shortId()}`;
+    const base = memDB.get(id) || { cartId: id, userId: String(userId), items: [] };
+    const merged = {
+      ...base,
+      userId: String(userId || base.userId),
+      items: Array.isArray(items) && items.length > 0 ? items : base.items,
+    };
+    memDB.set(id, merged);
+    return merged;
+  },
+  async appendItemsToCart({ cartId, userId, items = [] }) {
+    const id = String(cartId);
+    const base = memDB.get(id) || { cartId: id, userId: String(userId), items: [] };
+    const merged = {
+      ...base,
+      userId: String(userId || base.userId),
+      items: [...(base.items || []), ...(items || [])],
+    };
+    memDB.set(id, merged);
+    return merged;
+  },
+  async deleteCart(cartId) {
+    return memDB.delete(String(cartId));
+  },
+  async ping() {
+    return true;
+  },
+};
+
+function shortId() {
+  return randomUUID().replace(/-/g, "").slice(0, 10);
 }
 
-export function normalizeItems(items = []) {
-  const nowISO = new Date().toISOString();
-  return items
-    .filter(Boolean)
-    .map((raw, idx) => {
-      const type = String(raw.type || "unknown").toLowerCase();
-      const title = String(raw.title || `item-${idx + 1}`);
-      const sourceUrl = raw.sourceUrl ? String(raw.sourceUrl) : null;
-      const durationSec =
-        raw.durationSec !== undefined && raw.durationSec !== null
-          ? Number(raw.durationSec)
-          : null;
-
-      return {
-        id: `${Date.now()}-${newId()}-${idx}`,
-        type,
-        title,
-        sourceUrl,
-        durationSec,
-        addedAt: nowISO,
-      };
-    });
-}
-
-export function upsertCart({ cartId, userId, items = [] }) {
-  const id = cartId || `${userId}-${newId()}`;
-  const existing = carts.get(id);
-  if (!existing) {
-    const cart = { cartId: id, userId, items: [] };
-    if (Array.isArray(items) && items.length) cart.items.push(...items);
-    carts.set(id, cart);
-    return cart;
-  }
-  // merge: replace userId if changed; append items
-  existing.userId = userId;
-  if (Array.isArray(items) && items.length) existing.items.push(...items);
-  return existing;
-}
-
-export function appendItemsToCart({ cartId, userId, items = [] }) {
-  const cart = carts.get(cartId) || { cartId, userId, items: [] };
-  if (!carts.has(cartId)) carts.set(cartId, cart);
-  if (Array.isArray(items) && items.length) cart.items.push(...items);
-  return cart;
-}
-
-export function getCart(cartId) {
-  return carts.get(cartId) || null;
-}
-
-export function deleteCart(cartId) {
-  return carts.delete(cartId);
-}
-
-/* ====== Export helpers ====== */
-
-export function cartToCsv(cart) {
-  // headers
-  const rows = [["id", "type", "title", "sourceUrl", "durationSec", "addedAt"]];
-  for (const it of cart.items) {
-    rows.push([
-      it.id,
-      it.type,
-      it.title?.replace?.(/"/g, '""') ?? "",
-      it.sourceUrl ?? "",
-      it.durationSec ?? "",
-      it.addedAt ?? "",
-    ]);
-  }
-  return rows.map(r => r.map(v => `"${String(v)}"`).join(",")).join("\n");
-}
-
-export function cartToText(cart) {
-  const lines = [];
-  lines.push(`# Cart: ${cart.cartId}`);
-  lines.push(`User: ${cart.userId}`);
-  lines.push(`Items: ${cart.items.length}`);
-  lines.push("");
-  cart.items.forEach((it, i) => {
-    lines.push(`${i + 1}. [${it.type}] ${it.title}`);
-    if (it.sourceUrl) lines.push(`   url: ${it.sourceUrl}`);
-    if (it.durationSec != null) lines.push(`   durationSec: ${it.durationSec}`);
-    lines.push(`   addedAt: ${it.addedAt}`);
+// ===== normalize util (shared) =====
+export function normalizeItems(items) {
+  const arr = Array.isArray(items) ? items : [];
+  const now = Date.now();
+  return arr.map((raw, idx) => {
+    const it = raw || {};
+    return {
+      id:
+        it.id ||
+        `${now}-${Math.random().toString(36).slice(2, 12)}-${idx}`,
+      type: String(it.type || "unknown"),
+      title: String(it.title || "Untitled"),
+      sourceUrl: it.sourceUrl ?? null,
+      durationSec:
+        it.durationSec == null ? null : Number(it.durationSec),
+      addedAt: it.addedAt || new Date().toISOString(),
+    };
   });
-  return lines.join("\n");
 }
+
+// ===== choose backend safely =====
+let STORE = memStore;
+(function initStore() {
+  const wantRedis =
+    String(process.env.FB_USE_REDIS || "")
+      .toLowerCase()
+      .trim() === "true";
+  const hasUrl = !!process.env.REDIS_URL;
+
+  if (wantRedis && hasUrl) {
+    try {
+      const r = makeRedisCartStore();
+      STORE = r;
+      log("cart_store_backend", { backend: r.backend });
+    } catch (err) {
+      log("cart_store_fallback_memory", {
+        reason: String(err && err.message ? err.message : err),
+      });
+      STORE = memStore;
+    }
+  } else {
+    STORE = memStore;
+    log("cart_store_backend", { backend: "memory" });
+  }
+})();
+
+// ===== re-export a stable API =====
+export const backend = () => STORE.backend;
+export const getCart = (...a) => STORE.getCart(...a);
+export const upsertCart = (...a) => STORE.upsertCart(...a);
+export const appendItemsToCart = (...a) => STORE.appendItemsToCart(...a);
+export const deleteCart = (...a) => STORE.deleteCart(...a);
+export const ping = (...a) => STORE.ping(...a);
