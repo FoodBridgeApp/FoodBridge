@@ -1,8 +1,7 @@
-// server/index.js  (ESM)
+// server/index.js  (ESM, no rate-limit)
 
 import express from "express";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
 
 const app = express();
 
@@ -36,17 +35,6 @@ app.use(
 
 app.use(express.json());
 
-// Basic rate-limit on all /api routes (300 req/min per IP)
-app.use(
-  "/api",
-  rateLimit({
-    windowMs: 60_000,
-    max: 300,
-    standardHeaders: true,
-    legacyHeaders: false,
-  })
-);
-
 /* =========================
    Routes
    ========================= */
@@ -67,75 +55,3 @@ app.get("/api/version", (req, res) => {
 });
 
 // Email health (placeholder)
-app.get("/api/email/health", (req, res) => {
-  const emailConfigured = !!process.env.SMTP_HOST;
-  res.json({
-    ok: emailConfigured,
-    smtpHostSet: emailConfigured,
-    ts: Date.now(),
-  });
-});
-
-// Debug: whoami
-app.get("/api/_debug/whoami", (req, res) => {
-  res.json({
-    ok: true,
-    userAgent: req.headers["user-agent"],
-    ip: req.ip,
-    ts: Date.now(),
-  });
-});
-
-// Debug: info
-app.get("/api/_debug/info", (req, res) => {
-  res.json({
-    ok: true,
-    env: process.env.NODE_ENV || "development",
-    region: process.env.RENDER_REGION || null,
-    commit: COMMIT || null,
-    ts: Date.now(),
-  });
-});
-
-// Ping
-app.get("/api/ping", (req, res) => {
-  res.json({ ok: true, pong: true, ts: Date.now() });
-});
-
-// Runtime config (SAFE only; no secrets)
-app.get("/api/config", (req, res) => {
-  res.json({
-    ok: true,
-    version: VERSION,
-    nodeEnv: process.env.NODE_ENV || "development",
-    startedAt: STARTED_AT,
-    region: process.env.RENDER_REGION || null,
-    commit: COMMIT || null,
-    features: {
-      demoIngest: true,
-      emailEnabled: !!process.env.SMTP_HOST,
-    },
-  });
-});
-
-// Aggregated status
-app.get("/api/status", (req, res) => {
-  res.json({
-    ok: true,
-    uptimeSec: process.uptime(),
-    version: VERSION,
-    shortCommit: COMMIT ? COMMIT.slice(0, 7) : null,
-    emailReady: !!process.env.SMTP_HOST,
-    startedAt: STARTED_AT,
-  });
-});
-
-/* =========================
-   Start server
-   ========================= */
-const log = (msg, extra = {}) =>
-  console.log(JSON.stringify({ level: "info", msg, ...extra }));
-
-app.listen(PORT, () => {
-  log("listening", { port: PORT, version: VERSION });
-});
