@@ -120,3 +120,15 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`FoodBridge server listening on port ${PORT}`);
 });
+app.get('/api/_debug/routes', (_req,res) => {
+  try {
+    const stack = (app._router && app._router.stack) || [];
+    const routes = [];
+    for (const s of stack) {
+      if (s.route?.path) routes.push({ path: s.route.path, methods: Object.keys(s.route.methods||{}) });
+    }
+    res.json({ ok:true, routes });
+  } catch (e) {
+    res.status(500).json({ ok:false, error: String(e?.message||e) });
+  }
+});
