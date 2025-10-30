@@ -1,4 +1,16 @@
-$BASE = 'https://foodbridge-server-rv0a.onrender.com'
-$u = "christian"
-$items = @{ items = @(@{ type="recipe"; title="Pasta"; sourceUrl="https://ex"; durationSec=900 }); userId=$u } | ConvertTo-Json
-iwr "$BASE/api/cart/upsert" -Method POST -Body $items -ContentType "application/json" | % Content
+{
+  "name": "foodbridge-server",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": { "node": ">=20 <21" },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "NODE_ENV=development node server/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.13"
+  }
+}
