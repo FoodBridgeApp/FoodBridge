@@ -1,19 +1,49 @@
-{
-  "name": "foodbridge-server",
-  "version": "1.2.0",
-  "private": true,
-  "type": "module",
-  "engines": { "node": ">=20 <23" },
-  "scripts": {
-    "start": "node server/index.js",
-    "start:server": "node server/index.js",
-    "build": "echo \"(no-op) backend only\"",
-    "postinstall": "echo \"postinstall done\""
-  },
-  "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.21.1",
-    "nodemailer": "^6.9.15",
-    "uuid": "^9.0.1"
+// server/logger.js (ESM)
+// Minimal JSON logger + request middleware.
+
+import { randomUUID } from "node:crypto";
+
+export function log(msg, extra = {}) {
+  const rec = { level: "info", msg, ...extra };
+  try {
+    console.log(JSON.stringify(rec));
+  } catch {
+    console.log(`{"level":"info","msg":"${msg}"}`);
   }
+}
+
+export function requestLogger() {
+  return (req, res, next) => {
+    // attach req.id
+    req.id = randomUUID();
+
+    // health checks are noisy—skip start logs for them
+    if (!(req.method === "GET" && req.path === "/api/health")) {
+      log("req_start", {
+        reqId: req.id,
+        method: req.method,
+        path: req.path,
+        ip: req.ip,
+        ua: req.headers["user-agent"],
+      });
+    }
+
+    const started = Date.now();
+    res.on("finish", () => {
+      const ms = Date.now() - started;
+      // also skip finish logs for health checks
+      if (req.method === "GET" && req.path === "/api/health") return;
+      log("req_done", {
+        reqId: req.id,
+        method: req.method,
+        path: req.path,
+        ip: req.ip,
+        ua: req.headers["user-agent"],
+        status: res.statusCode,
+        ms,
+      });
+    });
+
+    next();
+  };
 }
