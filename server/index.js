@@ -1,20 +1,36 @@
 // server/index.js  (ESM, full file)
 // Features: health, version, config, logging, email send, templated email,
-//           demo ingest, in-memory cart API,
-//           NEW: email cart summary, export cart JSON
+//           demo ingest, cart API (memory or Redis), cart email summary, export JSON
+//           NEW: optional JWT/HMAC auth gates (FB_REQUIRE_AUTH="true")
 
 import express from "express";
 import cors from "cors";
 import nodemailer from "nodemailer";
 import { requestLogger, log } from "./logger.js";
-import {
-  getCart,
-  upsertCart,
-  appendItemsToCart,
-  deleteCart,
-  normalizeItems,
-} from "./cart.js";
 import { renderTemplate } from "./templates.js";
+import { authGate, isAuthRequired } from "./auth.js";
+
+// ---- Choose cart backend at runtime ----
+const USE_REDIS = String(process.env.CART_BACKEND || "").toLowerCase() === "redis";
+let getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems;
+
+if (USE_REDIS) {
+  const m = await import("./cart-redis.js");
+  getCart = m.getCart;
+  upsertCart = m.upsertCart;
+  appendItemsToCart = m.appendItemsToCart;
+  deleteCart = m.deleteCart;
+  normalizeItems = m.normalizeItems;
+  console.log("[cart] Using Redis backend");
+} else {
+  const m = await import("./cart.js");
+  getCart = m.getCart;
+  upsertCart = m.upsertCart;
+  appendItemsToCart = m.appendItemsToCart;
+  deleteCart = m.deleteCart;
+  normalizeItems = m.normalizeItems;
+  console.log("[cart] Using in-memory backend");
+}
 
 const app = express();
 
@@ -31,7 +47,6 @@ const VERSION = COMMIT || "dev-local";
 const ALLOW_ORIGINS = [
   "https://foodbridgeapp.github.io",
   "https://foodbridgeapp.github.io/FoodBridge",
-  // you can add dev origins here if needed:
   // "http://localhost:5173",
   // "http://localhost:3000",
 ];
@@ -43,11 +58,27 @@ app.use(
   cors({
     credentials: true,
     origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // CLI tools and same-origin
+      if (!origin) return cb(null, true); // CLI tools & same-origin
       cb(null, ALLOW_ORIGINS.includes(origin));
     },
   })
 );
+
+// Capture raw body (optional; helps HMAC if you want)
+app.use((req, _res, next) => {
+  let data = [];
+  req.on("data", (c) => data.push(c));
+  req.on("end", () => {
+    try {
+      req.rawBodyBuffer = Buffer.concat(data);
+      req.rawBodyString = req.rawBodyBuffer.toString("utf8");
+    } catch {
+      req.rawBodyBuffer = Buffer.alloc(0);
+      req.rawBodyString = "";
+    }
+    next();
+  });
+});
 
 app.use(express.json({ limit: "512kb" }));
 
@@ -189,6 +220,8 @@ app.get("/api/config", (req, res) => {
       templatedEmail: true,
       cartEmailSummary: true,
       cartExportJson: true,
+      authRequired: isAuthRequired(),
+      redisBackend: USE_REDIS
     },
     reqId: req.id,
   });
@@ -210,6 +243,8 @@ app.get("/api/status", (req, res) => {
 /* =========================
    Email
    ========================= */
+
+// No auth needed for health
 app.get("/api/email/health", async (req, res) => {
   const emailConfigured =
     !!process.env.SMTP_HOST && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
@@ -233,7 +268,8 @@ app.get("/api/email/health", async (req, res) => {
   });
 });
 
-app.post("/api/email/send", async (req, res) => {
+// Protect actual send with auth gate if enabled
+app.post("/api/email/send", authGate(isAuthRequired()), async (req, res) => {
   try {
     const ip = req.ip || "unknown";
     const gate = emailLimiter(ip);
@@ -269,11 +305,7 @@ app.post("/api/email/send", async (req, res) => {
 /* =========================
    Templated Email
    ========================= */
-/**
- * Body: { to, subject, template: "basic", vars: {...}, from? }
- * vars supports: title, intro, ctaText, ctaUrl, footer
- */
-app.post("/api/email/template", async (req, res) => {
+app.post("/api/email/template", authGate(isAuthRequired()), async (req, res) => {
   try {
     const ip = req.ip || "unknown";
     const gate = emailLimiter(ip);
@@ -327,26 +359,43 @@ app.post("/api/ingest/demo", (req, res) => {
     { total: 0, byType: {} }
   );
 
-  // If a cartId is specified, append to that cart
   let cartResult = null;
   if (cartId) {
-    cartResult = appendItemsToCart({ cartId, userId, items: normalized });
+    // append to existing cart
+    appendItemsToCart({ cartId, userId, items: normalized }).then((c) => {
+      cartResult = c;
+      log("demo_ingest_ok", { reqId, userId, totalItems: counters.total, cartId });
+      res.json({
+        ok: true,
+        reqId,
+        userId,
+        cartId,
+        tags,
+        counts: counters,
+        items: normalized,
+        cart: cartResult,
+        receivedAt: Date.now(),
+      });
+    }).catch((err) => {
+      log("demo_ingest_err", { reqId, error: String(err?.message || err) });
+      res.status(500).json({ ok: false, error: "cart_append_failed", reqId });
+    });
+    return;
   }
 
-  const result = {
+  // no cart append; just echo
+  log("demo_ingest_ok", { reqId, userId, totalItems: counters.total, cartId: null });
+  res.json({
     ok: true,
     reqId,
     userId,
-    cartId,
+    cartId: null,
     tags,
     counts: counters,
     items: normalized,
-    cart: cartResult,
+    cart: null,
     receivedAt: Date.now(),
-  };
-
-  log("demo_ingest_ok", { reqId, userId, totalItems: counters.total, cartId });
-  res.json(result);
+  });
 });
 
 /* =========================
@@ -354,49 +403,49 @@ app.post("/api/ingest/demo", (req, res) => {
    ========================= */
 
 // Create or update a cart (upsert). Body: { cartId?, userId, items? }
-app.post("/api/cart/upsert", (req, res) => {
+app.post("/api/cart/upsert", async (req, res) => {
   const { cartId, userId, items } = req.body || {};
   if (!userId) return res.status(400).json({ ok: false, error: "missing_userId", reqId: req.id });
 
   const normalized = Array.isArray(items) ? normalizeItems(items) : [];
-  const cart = upsertCart({ cartId, userId: String(userId), items: normalized });
+  const cart = await upsertCart({ cartId, userId: String(userId), items: normalized });
   res.json({ ok: true, cart, reqId: req.id });
 });
 
 // Append items to a cart. Body: { items: [...] }
-app.post("/api/cart/:cartId/items", (req, res) => {
+app.post("/api/cart/:cartId/items", async (req, res) => {
   const { cartId } = req.params;
   const { userId, items } = req.body || {};
   if (!cartId) return res.status(400).json({ ok: false, error: "missing_cartId", reqId: req.id });
   if (!userId) return res.status(400).json({ ok: false, error: "missing_userId", reqId: req.id });
 
   const normalized = Array.isArray(items) ? normalizeItems(items) : [];
-  const cart = appendItemsToCart({ cartId: String(cartId), userId: String(userId), items: normalized });
+  const cart = await appendItemsToCart({ cartId: String(cartId), userId: String(userId), items: normalized });
   res.json({ ok: true, cart, reqId: req.id });
 });
 
 // Read a cart
-app.get("/api/cart/:cartId", (req, res) => {
+app.get("/api/cart/:cartId", async (req, res) => {
   const { cartId } = req.params;
-  const c = getCart(String(cartId));
+  const c = await getCart(String(cartId));
   if (!c) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
   res.json({ ok: true, cart: c, reqId: req.id });
 });
 
 // Delete a cart
-app.delete("/api/cart/:cartId", (req, res) => {
+app.delete("/api/cart/:cartId", async (req, res) => {
   const { cartId } = req.params;
-  const ok = deleteCart(String(cartId));
+  const ok = await deleteCart(String(cartId));
   res.json({ ok, reqId: req.id });
 });
 
 /* =========================
-   NEW: Cart email summary + export
+   Cart email summary + export
    ========================= */
 
 // POST /api/cart/:cartId/email-summary
 // Body: { to, subject?, from? }
-app.post("/api/cart/:cartId/email-summary", async (req, res) => {
+app.post("/api/cart/:cartId/email-summary", authGate(isAuthRequired()), async (req, res) => {
   try {
     const ip = req.ip || "unknown";
     const gate = emailLimiter(ip);
@@ -405,7 +454,7 @@ app.post("/api/cart/:cartId/email-summary", async (req, res) => {
     }
 
     const { cartId } = req.params;
-    const cart = getCart(String(cartId));
+    const cart = await getCart(String(cartId));
     if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
 
     const { to, subject, from } = req.body || {};
@@ -444,9 +493,9 @@ app.post("/api/cart/:cartId/email-summary", async (req, res) => {
 });
 
 // GET /api/cart/:cartId/export.json
-app.get("/api/cart/:cartId/export.json", (req, res) => {
+app.get("/api/cart/:cartId/export.json", async (req, res) => {
   const { cartId } = req.params;
-  const cart = getCart(String(cartId));
+  const cart = await getCart(String(cartId));
   if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
 
   res.setHeader("Content-Type", "application/json; charset=utf-8");
