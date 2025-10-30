@@ -1,11 +1,9 @@
 {
   "name": "foodbridge-server",
-  "version": "1.0.0",
+  "private": true,
   "type": "module",
-  "engines": { "node": ">=20 <21" },
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "NODE_ENV=development node server/index.js"
+    "start": "node server/index.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
