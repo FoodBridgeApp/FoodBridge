@@ -1,20 +1,4 @@
-{
-  "name": "foodbridge-server",
-  "version": "1.2.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "start": "node server/index.js",
-    "postinstall": "echo postinstall done"
-  },
-  "engines": {
-    "node": "20.x"
-  },
-  "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "ioredis": "^5.4.1",
-    "jsonwebtoken": "^9.0.2",
-    "nodemailer": "^6.9.14"
-  }
-}
+$BASE = 'https://foodbridge-server-rv0a.onrender.com'
+$u = "christian"
+$items = @{ items = @(@{ type="recipe"; title="Pasta"; sourceUrl="https://ex"; durationSec=900 }); userId=$u } | ConvertTo-Json
+iwr "$BASE/api/cart/upsert" -Method POST -Body $items -ContentType "application/json" | % Content
