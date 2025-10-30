@@ -1,144 +1,90 @@
-import "dotenv/config";
-import express from "express";
-import cors from "cors";
-import nodemailer from "nodemailer";
+// server/index.js
+
+const express = require("express");
+const cors = require("cors");
 
 const app = express();
 
-/** CORS allowlist */
-const fromEnv = (process.env.FRONTEND_ORIGIN || "https://foodbridgeapp.github.io")
-  .split(",").map(s => s.trim());
-const allowList = new Set([
-  ...fromEnv,
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "http://localhost:8080",
-  "http://127.0.0.1:5500",
-  "http://localhost:5500",
-]);
+// --- Config & constants ---
+const PORT = process.env.PORT || 10000;
+const STARTED_AT = new Date().toISOString();
+const VERSION = process.env.FB_VERSION || "dev-local";
 
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true);
-    cb(null, allowList.has(origin));
-  }
-}));
-app.use(express.json({ limit: "2mb" }));
+// --- Middleware ---
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json());
 
-/** DEBUG: commit */
-const COMMIT =
-  process.env.RENDER_GIT_COMMIT ||
-  process.env.VERCEL_GIT_COMMIT_SHA ||
-  process.env.GIT_COMMIT ||
-  "local";
-
-/** --- Real routes BEFORE 404 catch-all --- */
-
-// Health
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, ts: new Date().toISOString() });
+// --- Health & version routes ---
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, status: "healthy", ts: Date.now() });
 });
 
-// Version
-app.get("/api/version", (_req, res) => {
+app.get("/api/version", (req, res) => {
+  res.json({ ok: true, version: VERSION, startedAt: STARTED_AT });
+});
+
+// --- Email health route (placeholder check) ---
+app.get("/api/email/health", (req, res) => {
+  const emailConfigured = !!process.env.SMTP_HOST;
   res.json({
-    ok: true,
-    service: "FoodBridge API",
-    version: process.env.APP_VERSION || "unset",
-    commit: COMMIT,
+    ok: emailConfigured,
+    smtpHostSet: emailConfigured,
+    ts: Date.now(),
   });
 });
 
-// Email (Nodemailer)
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.gmail.com",
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: String(process.env.SMTP_SECURE || "false") === "true",
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS, // Gmail App Password (16 chars, no spaces)
-  },
-});
-
-app.get("/api/email/health", async (_req, res) => {
-  try {
-    await transporter.verify();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: String(err?.message || err) });
-  }
-});
-
-app.post("/api/email/send", async (req, res) => {
-  try {
-    const { to, subject, text, html } = req.body || {};
-    if (!to || !subject) {
-      return res.status(400).json({ ok: false, error: "Missing to or subject" });
-    }
-    const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to, subject, text, html,
-    });
-    res.json({ ok: true, id: info.messageId });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: String(err?.message || err) });
-  }
-});
-
-// Debug: which file is running?
-app.get("/api/_debug/whoami", (_req, res) => {
-  res.json({ ok: true, file: import.meta.url, commit: COMMIT, ts: new Date().toISOString() });
-});
-
-// Debug: list mounted routes
-app.get("/api/_debug/info", (_req, res) => {
-  try {
-    const stack = (app._router && app._router.stack) || [];
-    const routes = [];
-    for (const s of stack) {
-      if (s.route?.path) {
-        routes.push({ path: s.route.path, methods: Object.keys(s.route.methods || {}) });
-      } else if (s.name === "router" && s.handle?.stack) {
-        for (const r of s.handle.stack) {
-          if (r.route?.path) {
-            routes.push({ path: r.route.path, methods: Object.keys(r.route.methods || {}) });
-          }
-        }
-      }
-    }
-    res.json({ ok: true, commit: COMMIT, version: process.env.APP_VERSION || "unset", routes });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
-});
-
-// Ping (super quick uptime)
-app.get("/api/ping", (_req, res) => {
-  res.json({ ok: true, ts: new Date().toISOString() });
-});
-
-// Sanitized runtime config (no secrets)
-app.get("/api/config", (_req, res) => {
-  const safe = {
+// --- Debug routes ---
+app.get("/api/_debug/whoami", (req, res) => {
+  res.json({
     ok: true,
-    commit: COMMIT,
-    version: process.env.APP_VERSION || "unset",
-    node: process.version,
-    port: process.env.PORT || 10000,
-    FRONTEND_ORIGIN: process.env.FRONTEND_ORIGIN || "https://foodbridgeapp.github.io",
-    SMTP_HOST: process.env.SMTP_HOST || "smtp.gmail.com",
-    SMTP_PORT: Number(process.env.SMTP_PORT || 587),
-    SMTP_SECURE: String(process.env.SMTP_SECURE || "false") === "true",
-  };
-  res.json(safe);
+    userAgent: req.headers["user-agent"],
+    ip: req.ip,
+    ts: Date.now(),
+  });
 });
 
-/** --- 404 fallback MUST be last --- */
-app.use("/api", (_req, res) => {
-  res.status(404).json({ ok: false, error: "API route not found" });
+app.get("/api/_debug/info", (req, res) => {
+  res.json({
+    ok: true,
+    env: process.env.NODE_ENV || "development",
+    region: process.env.RENDER_REGION || null,
+    commit: process.env.RENDER_GIT_COMMIT || null,
+    ts: Date.now(),
+  });
 });
 
-const PORT = process.env.PORT || 10000;
+// --- New routes ---
+app.get("/api/ping", (req, res) => {
+  res.json({ ok: true, pong: true, ts: Date.now() });
+});
+
+app.get("/api/config", (req, res) => {
+  res.json({
+    ok: true,
+    version: VERSION,
+    nodeEnv: process.env.NODE_ENV || "development",
+    startedAt: STARTED_AT,
+    region: process.env.RENDER_REGION || null,
+    commit: process.env.RENDER_GIT_COMMIT || null,
+    features: {
+      demoIngest: true,
+      emailEnabled: !!process.env.SMTP_HOST,
+    },
+  });
+});
+
+// --- Aggregated status route ---
+app.get("/api/status", (req, res) => {
+  res.json({
+    ok: true,
+    uptimeSec: process.uptime(),
+    version: VERSION,
+    emailReady: !!process.env.SMTP_HOST,
+    startedAt: STARTED_AT,
+  });
+});
+
+// --- Start server ---
 app.listen(PORT, () => {
-  console.log(`FoodBridge server listening on port ${PORT}`);
+  console.log(`[server] listening on ${PORT} (version=${VERSION})`);
 });
