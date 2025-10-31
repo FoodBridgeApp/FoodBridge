@@ -2,6 +2,9 @@
 // Talks to server at window.__FB_API_BASE__ (from config.js)
 
 (function () {
+  const BUILD = "fb-2025-10-31b"; // <- shows in console to confirm new JS is live
+  console.log("[%cFoodBridge%c] %s", "color:#4da3ff", "color:inherit", BUILD);
+
   // ---------- Config ----------
   const API_BASE =
     (typeof window.__FB_API_BASE__ === "string" && window.__FB_API_BASE__) ||
@@ -68,51 +71,27 @@
   const priceCache = new Map();
 
   // ---------- Helpers ----------
-  function normalize(s) {
-    return String(s || "").toLowerCase();
-  }
+  const normalize = (s) => String(s || "").toLowerCase();
 
   function categorizeIngredient(title) {
     const t = normalize(title);
-
-    // Meat / seafood
     if (/(beef|chicken|pork|turkey|steak|ground|bacon|sausage|ham|lamb)/.test(t)) return "meat";
     if (/(salmon|shrimp|tuna|cod|tilapia|sardine|anchovy|fish)/.test(t)) return "seafood";
-
-    // Dairy / eggs
-    if (/(milk|cheese|mozzarella|cheddar|parmesan|parmigiano|butter|yogurt|cream|half[-\s]?and[-\s]?half|egg)/.test(t))
-      return "dairy";
-
-    // Produce
-    if (/(tomato|onion|garlic|pepper|bell pepper|jalape|lettuce|spinach|kale|carrot|celery|herb|basil|cilantro|parsley|lemon|lime|avocado|potato|mushroom|cucumber|zucchini|broccoli|cauliflower)/.test(t))
-      return "produce";
-
-    // Bakery / bread
+    if (/(milk|cheese|mozzarella|cheddar|parmesan|parmigiano|butter|yogurt|cream|half[-\s]?and[-\s]?half|egg)/.test(t)) return "dairy";
+    if (/(tomato|onion|garlic|pepper|bell pepper|jalape|lettuce|spinach|kale|carrot|celery|basil|cilantro|parsley|lemon|lime|avocado|potato|mushroom|cucumber|zucchini|broccoli|cauliflower)/.test(t)) return "produce";
     if (/(bread|bun|tortilla|pita|baguette|roll|crust|pizza dough|dough)/.test(t)) return "bakery";
-
-    // Grains / pasta
-    if (/(pasta|spaghetti|penne|rigatoni|macaroni|noodle|rice|quinoa|farro|couscous|oats|flour|cornmeal)/.test(t))
-      return "grains";
-
-    // Spices / seasoning
-    if (/(salt|pepper|oregano|basil|cumin|paprika|chili|flake|turmeric|coriander|clove|cinnamon)/.test(t))
-      return "spices";
-
-    // Pantry / oils / canned / sauces
-    if (/(olive oil|oil|vinegar|soy sauce|sauce|ketchup|mustard|mayonnaise|mayo|stock|broth|beans|tomato paste|tomato sauce|canned|jarred|sugar|honey|yeast|baking powder|baking soda)/.test(t))
-      return "pantry";
-
-    // Frozen / beverages heuristic
+    if (/(pasta|spaghetti|penne|rigatoni|macaroni|noodle|rice|quinoa|farro|couscous|oats|flour|cornmeal)/.test(t)) return "grains";
+    if (/(salt|pepper|oregano|basil|cumin|paprika|chili|flake|turmeric|coriander|clove|cinnamon)/.test(t)) return "spices";
+    if (/(olive oil|oil|vinegar|soy sauce|sauce|ketchup|mustard|mayonnaise|mayo|stock|broth|beans|tomato paste|tomato sauce|canned|jarred|sugar|honey|yeast|baking powder|baking soda)/.test(t)) return "pantry";
     if (/(frozen|ice cream)/.test(t)) return "frozen";
     if (/(juice|soda|coffee|tea)/.test(t)) return "beverages";
-
     return "other";
   }
 
   function computeBasePrice(title) {
-    const cat = categorizeIngredient(title);
-    const base = CATEGORY_PRICES[cat] ?? CATEGORY_PRICES.other;
-    return { category: cat, basePrice: base };
+    const category = categorizeIngredient(title);
+    const basePrice = CATEGORY_PRICES[category] ?? CATEGORY_PRICES.other;
+    return { category, basePrice };
   }
 
   function looksLikeBrand(title) {
@@ -125,15 +104,13 @@
     if (priceCache.has(key)) return priceCache.get(key);
     const { category, basePrice } = computeBasePrice(key);
     const isBrand = looksLikeBrand(key);
-    const price = basePrice * (isBrand ? 1.0 : 1.0); // initial (pre-optimization)
+    const price = basePrice * (isBrand ? 1.0 : 1.0);
     const enriched = { category, basePrice, price, optimized: false, genericApplied: false };
     priceCache.set(key, enriched);
     return enriched;
-    }
-
-  function formatMoney(n) {
-    return (Number.isFinite(n) ? n : 0).toFixed(2);
   }
+
+  const formatMoney = (n) => (Number.isFinite(n) ? n : 0).toFixed(2);
 
   function dedupeTitles(items) {
     const seen = new Set();
@@ -146,29 +123,29 @@
   }
 
   async function api(path, opts = {}) {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const url = `${API_BASE}${path}`;
+    const res = await fetch(url, {
       method: "GET",
       ...opts,
       headers: { "content-type": "application/json", ...(opts.headers || {}) },
     });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) {
+      const msg = data?.error || `HTTP ${res.status}`;
+      const e = new Error(msg);
+      e.status = res.status;
+      e.payload = data;
+      throw e;
+    }
     return data;
   }
 
-  function getCartId() {
-    return localStorage.getItem(LS_CART_ID);
-  }
-  function setCartId(id) {
-    if (id) localStorage.setItem(LS_CART_ID, id);
-  }
+  const getCartId = () => localStorage.getItem(LS_CART_ID);
+  const setCartId = (id) => id && localStorage.setItem(LS_CART_ID, id);
 
-  function normalizeItems(titles) {
-    return titles
-      .map((t) => String(t).trim())
-      .filter(Boolean)
-      .map((title) => ({ type: "ingredient", title }));
-  }
+  const normalizeItems = (titles) =>
+    titles.map((t) => String(t).trim()).filter(Boolean).map((title) => ({ type: "ingredient", title }));
 
   // ---------- Cart UI ----------
   function renderCart(cart) {
@@ -189,16 +166,9 @@
     cart.items.forEach((it) => {
       const title = it.title || "(untitled)";
       const info = ensureEnriched(title);
-
-      // Subtotal is the original (non-optimized) sum
       subtotal += info.basePrice;
-
-      // Total uses current price (may be optimized already)
       total += info.price;
-
-      if (info.genericApplied) {
-        totalGenericSavings += info.basePrice - info.price;
-      }
+      if (info.genericApplied) totalGenericSavings += info.basePrice - info.price;
 
       const li = document.createElement("li");
       li.style.display = "flex";
@@ -207,7 +177,7 @@
       li.style.gap = "8px";
 
       const left = document.createElement("div");
-      left.textContent = title + `  ·  ${info.category}`;
+      left.textContent = `${title} · ${info.category}`;
 
       const right = document.createElement("div");
       right.textContent = `$${formatMoney(info.price)}`;
@@ -220,11 +190,8 @@
 
     cartItems.appendChild(frag);
     checkoutTotal.textContent = formatMoney(total);
-
-    // Enable optimize if there are items
     if (btnOptimizeAll) btnOptimizeAll.disabled = false;
 
-    // If already optimized, show savings line
     if (totalGenericSavings > 0) {
       savingsBox.textContent = `You saved $${formatMoney(totalGenericSavings)} with generic swaps. (Before: $${formatMoney(
         subtotal
@@ -240,12 +207,9 @@
     }
     try {
       const data = await api(`/api/cart/${encodeURIComponent(cid)}`);
-      // Enrich prices for all cart items
       (data.cart.items || []).forEach((it) => ensureEnriched(it.title));
       renderCart(data.cart);
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }
 
   async function addToCart(titles) {
@@ -260,21 +224,20 @@
 
       const cid = data?.cart?.id;
       if (cid) setCartId(cid);
-
-      // Enrich new items
       (data.cart.items || []).forEach((it) => ensureEnriched(it.title));
       renderCart(data.cart);
     } catch (e) {
+      console.error(e);
       alert(`Add to cart failed: ${e.message}`);
     } finally {
       setBusy(false);
     }
   }
 
-  // ---------- Dish Generator (real steps from backend) ----------
+  // ---------- Dish Generator (true steps via backend) ----------
   async function onGenerate() {
-    const dish = elDish.value.trim();
-    const diet = elDiet.value.trim();
+    const dish = (elDish?.value || "").trim();
+    const diet = (elDiet?.value || "").trim();
     if (!dish) return alert("Type a dish first.");
 
     setBusy(true);
@@ -296,30 +259,51 @@
       btnAddIngredients.disabled = !ingredients.length;
       btnAddIngredients.onclick = () => addToCart(ingredients);
     } catch (e) {
+      console.error(e);
       alert(`Generate failed: ${e.message}`);
     } finally {
       setBusy(false);
     }
   }
 
-  // ---------- Import from URL (true LLM steps via backend) ----------
+  // ---------- Import from URL (send explicit text prompt to backend) ----------
   async function onImportUrl() {
-    const url = elUrl.value.trim();
+    const url = (elUrl?.value || "").trim();
     if (!url) return alert("Paste a URL first.");
+
+    // IMPORTANT: include 'text' so /api/ingest/llm can use the classic extractor if needed
+    const text = [
+      `Extract the exact recipe title, complete ingredient list, and the real step-by-step method from this source:`,
+      url,
+      `Return structured, real steps (not generic placeholders).`,
+      `Ingredients should be 8–30 short grocery-style names (no quantities or brands).`,
+    ].join("\n");
+
     setBusy(true);
     try {
       const data = await api(`/api/ingest/llm`, {
         method: "POST",
-        body: JSON.stringify({ userId: USER_ID, sourceUrl: url }),
+        body: JSON.stringify({ userId: USER_ID, text, sourceUrl: url }),
       });
 
+      // Prefer new-style {recipe:{title,ingredients,steps}}, but also support old-style items
       const recipe = data?.recipe || {};
-      const ingredients = recipe.ingredients || [];
-      const steps = recipe.steps?.length
-        ? recipe.steps
-        : ["Open the source link for details.", "Prepare and cook as directed."];
+      let ingredients = recipe.ingredients || [];
+      let steps = recipe.steps || [];
 
-      urlTitle.textContent = recipe.title || "Imported Recipe";
+      if (!ingredients.length && Array.isArray(data?.items)) {
+        ingredients = data.items.filter((x) => x.type === "ingredient").map((x) => x.title);
+      }
+      if (!steps?.length) {
+        steps = ["Open the source link for full steps.", "Prepare and cook as directed."];
+      }
+
+      const title =
+        recipe.title ||
+        (Array.isArray(data?.items) ? data.items.find((x) => x.type === "recipe")?.title : null) ||
+        "Imported Recipe";
+
+      urlTitle.textContent = title;
       urlMeta.textContent = url;
       renderSimpleList(urlIngredients, ingredients);
       renderSimpleList(urlSteps, steps);
@@ -327,46 +311,77 @@
       btnAddIngredientsUrl.disabled = !ingredients.length;
       btnAddIngredientsUrl.onclick = () => addToCart(ingredients);
     } catch (e) {
+      console.error(e);
       alert(`Import failed: ${e.message}`);
     } finally {
       setBusy(false);
     }
   }
 
-  // ---------- Ingredient Suggestions (with Add All) ----------
+  // ---------- Ingredient Suggestions (robust: try suggest API, fallback to LLM text) ----------
   async function onSuggest() {
-    const q = elQ.value.trim();
-    if (!q) return alert("Type a query (e.g. 'pasta').");
+    const q = (elQ?.value || "").trim();
+    if (!q) return alert('Type a query (e.g., "pasta").');
+
     setBusy(true);
     try {
-      const data = await api(`/api/ingest/ingredients/suggest?q=${encodeURIComponent(q)}`);
-      const list = (data?.ingredients || []).map((s) => String(s).trim()).filter(Boolean);
+      let list = [];
+      let usedFallback = false;
+
+      // Try the dedicated suggest endpoint first
+      try {
+        const resp = await api(`/api/ingest/ingredients/suggest?q=${encodeURIComponent(q)}`);
+        list = (resp?.ingredients || []).map(String).map((s) => s.trim()).filter(Boolean);
+      } catch (e) {
+        // Fallback to LLM text mode (always available)
+        usedFallback = true;
+        const text = [
+          `Suggest ingredients commonly used with: ${q}.`,
+          `Return 8–12 short grocery-style names (no brands, no quantities, no utensils).`,
+        ].join("\n");
+        const resp = await api(`/api/ingest/llm`, {
+          method: "POST",
+          body: JSON.stringify({ userId: USER_ID, text, sourceUrl: null }),
+        });
+        list = (resp?.items || [])
+          .filter((x) => x.type === "ingredient")
+          .map((x) => x.title)
+          .map((s) => String(s).trim())
+          .filter(Boolean);
+      }
 
       suggestions.innerHTML = "";
       if (!list.length) {
         suggestions.innerHTML = "<li>No suggestions.</li>";
-        return;
+      } else {
+        list.forEach((name) => {
+          const li = document.createElement("li");
+          li.textContent = name;
+          const btn = document.createElement("button");
+          btn.className = "btn";
+          btn.style.marginLeft = "8px";
+          btn.textContent = "+ Add";
+          btn.onclick = () => addToCart([name]);
+          li.appendChild(btn);
+          suggestions.appendChild(li);
+        });
+        const allBtn = document.createElement("button");
+        allBtn.className = "btn";
+        allBtn.textContent = "Add All";
+        allBtn.style.marginTop = "8px";
+        allBtn.onclick = () => addToCart(list);
+        suggestions.appendChild(allBtn);
+
+        if (usedFallback) {
+          const note = document.createElement("div");
+          note.className = "recipe-sub";
+          note.style.marginTop = "6px";
+          note.textContent = "(Using LLM fallback for suggestions.)";
+          suggestions.appendChild(note);
+        }
       }
-
-      list.forEach((name) => {
-        const li = document.createElement("li");
-        li.textContent = name;
-        const btn = document.createElement("button");
-        btn.className = "btn";
-        btn.style.marginLeft = "8px";
-        btn.textContent = "+ Add";
-        btn.onclick = () => addToCart([name]);
-        li.appendChild(btn);
-        suggestions.appendChild(li);
-      });
-
-      const allBtn = document.createElement("button");
-      allBtn.className = "btn";
-      allBtn.textContent = "Add All";
-      allBtn.style.marginTop = "8px";
-      allBtn.onclick = () => addToCart(list);
-      suggestions.appendChild(allBtn);
     } catch (e) {
+      console.error(e);
       alert(`Suggest failed: ${e.message}`);
     } finally {
       setBusy(false);
@@ -386,7 +401,7 @@
     el.appendChild(frag);
   }
 
-  // ---------- Optimize (apply generic discount to all items) ----------
+  // ---------- Optimize ----------
   async function onOptimizeAll() {
     const cid = getCartId();
     if (!cid) return alert("No cart yet.");
@@ -398,30 +413,17 @@
         renderCart(data.cart);
         return;
       }
-
-      // Apply generic discount to every eligible item
-      let changed = false;
       items.forEach((it) => {
-        const t = it.title || "";
-        const info = ensureEnriched(t);
+        const info = ensureEnriched(it.title || "");
         if (!info.genericApplied) {
-          // Treat everything as swappable to "generic" for demo purposes
           info.price = +(info.basePrice * (1 - GENERIC_DISCOUNT)).toFixed(2);
           info.genericApplied = true;
           info.optimized = true;
-          changed = true;
         }
       });
-
-      // Re-render with savings line
       renderCart({ items });
-      if (!changed) {
-        // If already optimized, still show a note
-        if (savingsBox && !savingsBox.textContent) {
-          savingsBox.textContent = "Items already optimized to generic pricing.";
-        }
-      }
     } catch (e) {
+      console.error(e);
       alert(`Optimize failed: ${e.message}`);
     } finally {
       setBusy(false);
@@ -429,35 +431,34 @@
   }
 
   // ---------- Email / Print ----------
-  const btnPrint = document.getElementById("btn-print");
-  if (btnPrint) btnPrint.onclick = () => window.print();
+  document.getElementById("btn-print")?.addEventListener("click", () => window.print());
 
-  const btnEmail = document.getElementById("btn-email");
-  if (btnEmail)
-    btnEmail.onclick = async () => {
-      const cid = getCartId();
-      if (!cid) return alert("No cart yet.");
-      const to = prompt("Send cart to which email?");
-      if (!to) return;
-      setBusy(true);
-      try {
-        await api(`/api/cart/${encodeURIComponent(cid)}/email-summary`, {
-          method: "POST",
-          body: JSON.stringify({ to, subject: "Your FoodBridge Cart" }),
-        });
-        alert("Email sent.");
-      } catch (e) {
-        alert(`Email failed: ${e.message}`);
-      } finally {
-        setBusy(false);
-      }
-    };
+  document.getElementById("btn-email")?.addEventListener("click", async () => {
+    const cid = getCartId();
+    if (!cid) return alert("No cart yet.");
+    const to = prompt("Send cart to which email?");
+    if (!to) return;
+    setBusy(true);
+    try {
+      await api(`/api/cart/${encodeURIComponent(cid)}/email-summary`, {
+        method: "POST",
+        body: JSON.stringify({ to, subject: "Your FoodBridge Cart" }),
+      });
+      alert("Email sent.");
+    } catch (e) {
+      console.error(e);
+      alert(`Email failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  });
 
-  // ---------- Events ----------
+  // ---------- Wire events ----------
   btnDish?.addEventListener("click", onGenerate);
   btnIngestUrl?.addEventListener("click", onImportUrl);
   btnSuggest?.addEventListener("click", onSuggest);
   btnOptimizeAll?.addEventListener("click", onOptimizeAll);
 
+  // ---------- Initial ----------
   document.addEventListener("DOMContentLoaded", refreshCartUI);
 })();
