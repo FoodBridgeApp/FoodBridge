@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import { log } from "../logger.js";
 import { generateRecipe } from "../llm.js";
 
