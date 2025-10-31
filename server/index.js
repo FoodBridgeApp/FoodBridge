@@ -1,6 +1,6 @@
 // server/index.js (ESM, full file, no-Redis build)
 // Features: health, version, config, logging, email send, templated email,
-//           demo ingest, LLM ingest (primary), cart API (memory), cart email summary, export JSON
+//           demo ingest, cart API (memory/redis), cart email summary, export JSON
 //           Optional JWT/HMAC auth via FB_REQUIRE_AUTH="true"
 
 import "dotenv/config";
@@ -10,11 +10,6 @@ import nodemailer from "nodemailer";
 import { requestLogger, log } from "./logger.js";
 import { renderTemplate } from "./templates.js";
 import { authGate, isAuthRequired } from "./auth.js";
-
-// --- LLM (OpenAI) ---
-import OpenAI from "openai";
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const LLM_MODEL = process.env.LLM_MODEL || "gpt-4o-mini";
 
 // ---- Choose cart backend at runtime (we default to memory) ----
 const USE_REDIS = String(process.env.CART_BACKEND || "").toLowerCase() === "redis";
@@ -37,6 +32,8 @@ if (USE_REDIS) {
   normalizeItems = m.normalizeItems;
   console.log("[cart] Using in-memory backend");
 }
+
+import ingestLlmRouter from "./routes/ingest-llm.js"; // <— NEW (router for /api/ingest/llm)
 
 const app = express();
 
@@ -93,6 +90,9 @@ app.use((req, res, next) => {
 });
 
 app.use(requestLogger());
+
+// ===== Mount LLM ingest router (adds POST /api/ingest/llm) =====
+app.use("/api/ingest", ingestLlmRouter);
 
 /* =========================
    Utils
@@ -219,7 +219,6 @@ app.get("/api/config", (req, res) => {
       cartExportJson: true,
       authRequired: isAuthRequired(),
       redisBackend: USE_REDIS,
-      llmIngest: !!process.env.OPENAI_API_KEY,
     },
     reqId: req.id,
   });
@@ -387,112 +386,6 @@ app.post("/api/ingest/demo", (req, res) => {
     cart: null,
     receivedAt: Date.now(),
   });
-});
-
-/* =========================
-   LLM Ingest (primary)
-   ========================= */
-app.post("/api/ingest/llm", async (req, res) => {
-  const reqId = req.id;
-  try {
-    const body = req.body || {};
-    const userId = String(body.userId || "guest");
-    const cartId = body.cartId ? String(body.cartId) : null;
-    const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
-    const text = (body.text || "").trim();
-
-    if (!text) {
-      return res.status(400).json({ ok: false, error: "missing_text", reqId });
-    }
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ ok: false, error: "missing_openai_api_key", reqId });
-    }
-
-    // Ask the LLM to extract structured items from free text.
-    // Output must be strict JSON with: { items: [{ type, title, sourceUrl?, durationSec? }] }
-    const prompt = `
-You extract recipes/ingredients from user text.
-Return STRICT JSON only, no prose, with shape:
-{"items":[{"type":"recipe"|"ingredient","title":string,"sourceUrl"?:string,"durationSec"?:number}]}
-
-Rules:
-- "type" is "recipe" when the text clearly names a dish; otherwise "ingredient".
-- Infer duration only if explicit (minutes/seconds); else omit.
-- If a URL is present, put it into "sourceUrl".
-- Titles should be concise, human-friendly.
-
-Text:
-"""${text}"""
-`;
-
-    const chat = await openai.chat.completions.create({
-      model: LLM_MODEL,
-      temperature: 0,
-      messages: [
-        { role: "system", content: "You return strict JSON only. No extra text." },
-        { role: "user", content: prompt },
-      ],
-      response_format: { type: "json_object" },
-    });
-
-    const raw = chat?.choices?.[0]?.message?.content || "{}";
-    let json;
-    try {
-      json = JSON.parse(raw);
-    } catch (_e) {
-      return res.status(502).json({ ok: false, error: "llm_invalid_json", raw, reqId });
-    }
-
-    const items = Array.isArray(json.items) ? json.items : [];
-    const normalized = normalizeItems(items);
-
-    const counts = normalized.reduce(
-      (acc, it) => {
-        acc.total += 1;
-        acc.byType[it.type] = (acc.byType[it.type] || 0) + 1;
-        return acc;
-      },
-      { total: 0, byType: {} }
-    );
-
-    if (cartId) {
-      try {
-        const cart = await appendItemsToCart({ cartId, userId, items: normalized });
-        log("llm_ingest_ok", { reqId, userId, totalItems: counts.total, cartId });
-        return res.json({
-          ok: true,
-          reqId,
-          userId,
-          cartId,
-          tags,
-          counts,
-          items: normalized,
-          cart,
-          receivedAt: Date.now(),
-        });
-      } catch (err) {
-        log("llm_ingest_err", { reqId, error: String(err?.message || err) });
-        return res.status(500).json({ ok: false, error: "cart_append_failed", reqId });
-      }
-    }
-
-    // If no cartId provided, just return the parsed items (same pattern as demo)
-    log("llm_ingest_ok", { reqId, userId, totalItems: counts.total, cartId: null });
-    return res.json({
-      ok: true,
-      reqId,
-      userId,
-      cartId: null,
-      tags,
-      counts,
-      items: normalized,
-      cart: null,
-      receivedAt: Date.now(),
-    });
-  } catch (err) {
-    log("llm_ingest_uncaught", { reqId: req?.id, error: String(err?.stack || err) });
-    return res.status(500).json({ ok: false, error: "internal_error", reqId: req?.id });
-  }
 });
 
 /* =========================
