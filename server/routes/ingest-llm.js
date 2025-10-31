@@ -1,14 +1,14 @@
 // server/routes/ingest-llm.js
 // POST /api/ingest/llm
 // Accepts:
-//   { dish?: string, diet?: string, text?: string, sourceUrl?: string, userId?: string, cartId?: string, tags?: string[] }
+//   { dish?: string, diet?: string, text?: string, sourceUrl?: string, userId?: string, cartId?: string }
 // Behavior:
-//   - dish flow -> AI creates full structured recipe (title/ingredients/steps) with cookbook context
-//   - url flow  -> fetch URL server-side, parse recipe schema/markup, then LLM normalizes
-//   - text flow -> classic extraction
+//   - If dish present: produce full structured recipe (title/ingredients/steps) with cookbook context
+//   - If sourceUrl present: fetch & parse page, pass extracted text to the LLM
+//   - Else, classic text extraction (recipe + ingredient items)
 // Response:
-//   Dish: { ok, mode:"dish", recipe:{...}, cart?, reqId }
-//   URL/Text: { ok, mode:"text", items:[...], cart?, reqId }
+//   For dish flow: { ok, mode:"dish", recipe:{...}, cart, reqId }
+//   For text/url flow: { ok, mode:"text", items:[...], cart, reqId }
 
 import express from "express";
 import { findCandidates } from "../library.js";
@@ -16,80 +16,72 @@ import { llmMakeRecipe, llmSuggestIngredients } from "../llm.js";
 import { appendItemsToCart, normalizeItems } from "../cart.js";
 import { log } from "../logger.js";
 
-// Node 18+ global fetch is available on Render
 const router = express.Router();
 
-// Quick GET to prove the route exists
+// ---------- tiny HTML → text helpers (no extra deps) ----------
+function stripTags(html) {
+  return String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// grab candidate “ingredients” sections by simple patterns
+function extractIngredientCandidates(htmlText) {
+  const text = stripTags(htmlText);
+  const blocks = [];
+
+  // Look for “Ingredients” header and grab up to ~800 chars after
+  const hdrRe = /ingredients?\s*[:\-\n]/i;
+  const idx = text.search(hdrRe);
+  if (idx >= 0) {
+    blocks.push(text.slice(idx, idx + 1200));
+  }
+
+  // Try list-like patterns (bullet-like words followed by commas/newlines)
+  const listy = text.match(/(?:\b|\n)(?:-|\u2022|\*)\s*[A-Za-z][^\n]{2,80}(?:\n|,)/g);
+  if (listy && listy.length) {
+    blocks.push(listy.slice(0, 30).join("\n"));
+  }
+
+  // Generic foody terms around commas
+  const foody = text.match(/\b([A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+){0,3})\s*(?:,|and)\s*/g);
+  if (foody) {
+    blocks.push(foody.slice(0, 50).join(" "));
+  }
+
+  // Return a conservative merged blurb
+  return blocks.join("\n").slice(0, 3000);
+}
+
+async function safeFetch(url, opts = {}) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 7000);
+  try {
+    const res = await fetch(url, { ...opts, signal: ctrl.signal, headers: { "user-agent": "FoodBridgeBot/1.0" } });
+    if (!res.ok) throw new Error(`fetch ${res.status}`);
+    return await res.text();
+  } finally {
+    clearTimeout(to);
+  }
+}
+
+// ---------- sanity GET for quick checks ----------
 router.get("/llm", (_req, res) => {
   res.json({
     ok: true,
-    usage: "POST /api/ingest/llm with { dish?, diet?, sourceUrl?, text?, userId?, cartId? }",
+    info: "POST { dish?, diet?, text?, sourceUrl?, userId?, cartId? }",
     examples: {
       dishFlow: { dish: "fish tacos", diet: "Pescatarian" },
-      urlFlow:  { sourceUrl: "https://www.seriouseats.com/some-recipe" },
-      textFlow: { text: "Ingredients: ... Steps: ..." },
+      textFlow: { text: "Ingredients: 12 oz spaghetti, garlic... Steps: ..." },
+      urlFlow: { sourceUrl: "https://www.instagram.com/p/xyz/" },
     },
   });
 });
 
-// ---- helpers to pull content from recipe pages ----
-function extractBetween(html, start, end) {
-  const s = html.indexOf(start);
-  if (s === -1) return null;
-  const e = html.indexOf(end, s + start.length);
-  if (e === -1) return null;
-  return html.slice(s + start.length, e);
-}
-
-function parseJSONSafe(str) {
-  try { return JSON.parse(str); } catch { return null; }
-}
-
-function pickFirst(arrOrOne) {
-  return Array.isArray(arrOrOne) ? (arrOrOne[0] ?? null) : arrOrOne ?? null;
-}
-
-async function fetchRecipeSource(sourceUrl) {
-  // Best effort: try to fetch HTML and parse common structures
-  // Note: Some sites (IG/TikTok) are JS-rendered or block bots; we still try
-  const resp = await fetch(sourceUrl, { redirect: "follow" });
-  if (!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
-  const html = await resp.text();
-
-  // Try JSON-LD (schema.org/Recipe)
-  const scripts = Array.from(html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi));
-  for (const m of scripts) {
-    const json = parseJSONSafe(m[1]);
-    if (!json) continue;
-    const graph = Array.isArray(json["@graph"]) ? json["@graph"] : [json];
-    for (const entry of graph) {
-      if ((entry["@type"] === "Recipe") || (Array.isArray(entry["@type"]) && entry["@type"].includes("Recipe"))) {
-        const name = pickFirst(entry.name) || "Recipe";
-        const ingr = Array.isArray(entry.recipeIngredient) ? entry.recipeIngredient : [];
-        const instr = Array.isArray(entry.recipeInstructions)
-          ? entry.recipeInstructions.map((x) => (typeof x === "string" ? x : (x.text || ""))).filter(Boolean)
-          : (typeof entry.recipeInstructions === "string" ? [entry.recipeInstructions] : []);
-        return {
-          title: name,
-          ingredients: ingr,
-          steps: instr,
-          rawText: [name, ...ingr, ...instr].join("\n"),
-        };
-      }
-    }
-  }
-
-  // Try Open Graph description or Twitter description as a weak fallback
-  const og = extractBetween(html, '<meta property="og:description" content="', '">')
-         || extractBetween(html, '<meta name="description" content="', '">')
-         || extractBetween(html, '<meta name="twitter:description" content="', '">');
-
-  const title = extractBetween(html, "<title>", "</title>")?.trim() || "Recipe";
-  const rawText = [title, og].filter(Boolean).join("\n");
-  return { title, ingredients: [], steps: [], rawText };
-}
-
-// --- dish-based recipe generation with cookbook grounding ---
+// ---------- main endpoint ----------
 router.post("/llm", async (req, res) => {
   const reqId = req.id;
   try {
@@ -98,23 +90,20 @@ router.post("/llm", async (req, res) => {
       diet = "",
       userId = "guest",
       text = "",
-      sourceUrl = "",
+      sourceUrl = null,
       cartId = null,
       tags = [],
     } = req.body || {};
 
     const trimmedDish = String(dish || "").trim();
-    const trimmedUrl  = String(sourceUrl || "").trim();
-    const hasText     = String(text || "").trim().length > 0;
 
-    // 1) Dish → structured recipe (title/ingredients/steps)
+    // 1) Dish → structured recipe w/ cookbook grounding
     if (trimmedDish) {
       const context = findCandidates({ query: trimmedDish, diet }, { limit: 5 });
       const out = await llmMakeRecipe({ dish: trimmedDish, diet, context });
 
-      // mirror as items so cart code can reuse
       const items = [
-        { type: "recipe", title: out.title, sourceUrl: trimmedUrl || null, durationSec: out.durationSec || null, tags: out.tags || [] },
+        { type: "recipe", title: out.title, sourceUrl: sourceUrl || null, durationSec: out.durationSec || null, tags: out.tags || [] },
         ...out.ingredients.map(i => ({ type: "ingredient", title: i })),
       ];
       const normalized = normalizeItems(items);
@@ -141,79 +130,41 @@ router.post("/llm", async (req, res) => {
       });
     }
 
-    // 2) URL → try fetch & parse, then LLM normalize
-    if (trimmedUrl && !hasText) {
-      let page = null;
+    // 2) URL provided → fetch & parse HTML, then ask LLM
+    let workingText = String(text || "");
+    let titleHint = null;
+
+    if (sourceUrl) {
       try {
-        page = await fetchRecipeSource(trimmedUrl);
+        const html = await safeFetch(String(sourceUrl));
+        // Get a rough title
+        const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+        titleHint = titleMatch ? stripTags(titleMatch[1]) : null;
+
+        const extracted = extractIngredientCandidates(html);
+        // Build a focused prompt combining the URL + extracted text
+        workingText = [
+          `You are reading a recipe page content extracted below.`,
+          `SOURCE URL: ${sourceUrl}`,
+          titleHint ? `PAGE TITLE: ${titleHint}` : "",
+          "",
+          `EXTRACTED TEXT (may be noisy):`,
+          extracted || "(none found)",
+          "",
+          `TASK: Return the recipe name (if clear) and the ingredient list ONLY.`,
+          `- 10–24 short grocery-style ingredient names (no brands/quantities/utensils).`,
+          `- If no clear ingredients are present, try to infer from context but keep items realistic.`,
+        ].filter(Boolean).join("\n");
       } catch (e) {
-        log("llm_url_fetch_warn", { reqId, sourceUrl: trimmedUrl, error: String(e?.message || e) });
+        // Fall back to classic text mode using just the URL string
+        workingText = [
+          `Attempt to infer the likely ingredient list for the recipe at this URL: ${sourceUrl}`,
+          `Return 8–16 short ingredient names.`,
+        ].join("\n");
       }
-
-      const baseText = page?.rawText || (`URL: ${trimmedUrl}`);
-      const classicSystem = `
-You are a recipe normalizer. Return strictly JSON:
-{
-  "items": [
-    { "type":"recipe"|"ingredient", "title":string, "sourceUrl"?:string, "durationSec"?:number }
-  ]
-}
-Rules:
-- If the text contains a real recipe with ingredient lines, include them as 'ingredient' items (not placeholders).
-- Keep titles short and human-readable.
-- Include a top-level "recipe" item if a specific dish is clearly described.
-`.trim();
-
-      const API_KEY   = process.env.OPENAI_API_KEY;
-      const API_URL   = process.env.LLM_API_URL || "https://api.openai.com/v1/chat/completions";
-      const LLM_MODEL = process.env.LLM_MODEL || "gpt-4o-mini";
-
-      const payload = { text: String(baseText).slice(0, 120000), sourceUrl: trimmedUrl };
-      const resLLM = await fetch(API_URL, {
-        method: "POST",
-        headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          model: LLM_MODEL,
-          temperature: 0.2,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: classicSystem },
-            { role: "user",   content: JSON.stringify(payload) },
-          ],
-        }),
-      });
-
-      const json = await resLLM.json().catch(() => ({}));
-      const content = json?.choices?.[0]?.message?.content || "{}";
-      let parsed = {};
-      try { parsed = JSON.parse(content); } catch {}
-
-      const items = Array.isArray(parsed?.items) ? parsed.items : [];
-      const cleaned = items
-        .map((it, idx) => ({
-          id: `${Date.now()}-${Math.random().toString(36).slice(2)}-${idx}`,
-          type: it.type === "ingredient" ? "ingredient" : "recipe",
-          title: String(it.title || "").trim(),
-          sourceUrl: it.sourceUrl ? String(it.sourceUrl) : trimmedUrl,
-          durationSec: Number.isFinite(it.durationSec) ? Math.max(0, Math.round(it.durationSec)) : null,
-          addedAt: new Date().toISOString(),
-        }))
-        .filter((it) => it.title.length > 0);
-
-      let attachedCart = null;
-      if (cartId && cleaned.length) {
-        attachedCart = await appendItemsToCart({
-          cartId: String(cartId),
-          userId: String(userId),
-          items: normalizeItems(cleaned),
-        });
-      }
-
-      log("llm_url_ok", { reqId, items: cleaned.length, hadSchema: (page?.ingredients?.length || 0) > 0 });
-      return res.json({ ok: true, reqId, mode: "text", items: cleaned, cart: attachedCart });
     }
 
-    // 3) Text fallback
+    // 3) Classic text extraction (for URL or free text)
     const classicSystem = `
 You are a recipe normalizer. Return strictly JSON:
 {
@@ -222,26 +173,29 @@ You are a recipe normalizer. Return strictly JSON:
   ]
 }
 Rules:
-- Use "recipe" for full dish; "ingredient" for single items.
-- Prefer including real ingredient lines if present (no placeholders).
-- Titles must be short and human-readable.
+- Use "recipe" for the single main dish name if identifiable; otherwise omit.
+- Return realistic grocery ingredients (short names). No brands, no quantities, no utensils.
+- Prefer 10–24 ingredients when confident, 8–16 otherwise.
 `.trim();
 
-    const API_KEY   = process.env.OPENAI_API_KEY;
-    const API_URL   = process.env.LLM_API_URL || "https://api.openai.com/v1/chat/completions";
+    const API_KEY = process.env.OPENAI_API_KEY;
+    const API_URL = process.env.LLM_API_URL || "https://api.openai.com/v1/chat/completions";
     const LLM_MODEL = process.env.LLM_MODEL || "gpt-4o-mini";
 
-    const payload = { text: String(text || "").slice(0, 120000), sourceUrl: trimmedUrl || null };
+    const payload = { text: workingText.slice(0, 120000), sourceUrl: sourceUrl || null, titleHint };
     const resLLM = await fetch(API_URL, {
       method: "POST",
-      headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${API_KEY}`,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         model: LLM_MODEL,
         temperature: 0.2,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: classicSystem },
-          { role: "user",   content: JSON.stringify(payload) },
+          { role: "user", content: JSON.stringify(payload) },
         ],
       }),
     });
@@ -257,11 +211,11 @@ Rules:
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}-${idx}`,
         type: it.type === "ingredient" ? "ingredient" : "recipe",
         title: String(it.title || "").trim(),
-        sourceUrl: it.sourceUrl ? String(it.sourceUrl) : null,
+        sourceUrl: it.sourceUrl ? String(it.sourceUrl) : (sourceUrl || null),
         durationSec: Number.isFinite(it.durationSec) ? Math.max(0, Math.round(it.durationSec)) : null,
         addedAt: new Date().toISOString(),
       }))
-      .filter((it) => it.title.length > 0);
+      .filter(it => it.title.length > 0);
 
     let attachedCart = null;
     if (cartId && cleaned.length) {
@@ -272,15 +226,22 @@ Rules:
       });
     }
 
-    log("llm_extract_ok", { reqId, totalItems: cleaned.length });
-    return res.json({ ok: true, reqId, mode: "text", items: cleaned, cart: attachedCart });
+    log("llm_extract_ok", { reqId, totalItems: cleaned.length, fromUrl: !!sourceUrl });
+    return res.json({
+      ok: true,
+      reqId,
+      mode: "text",
+      items: cleaned,
+      cart: attachedCart,
+      meta: { model: json?.model, fromUrl: !!sourceUrl, titleHint },
+    });
   } catch (err) {
     log("llm_ingest_error", { reqId, error: String(err?.message || err) });
-    return res.status(500).json({ ok: false, error: "ingest_failed", reqId });
+    return res.status(500).json({ ok: false, error: "ingest_failed", reqId: req.id });
   }
 });
 
-// Ingredient suggestions (helper for UI). Returns top suggestions.
+// Optional helper used later if you wire it in the UI
 router.get("/ingredients/suggest", async (req, res) => {
   try {
     const { q = "", diet = "" } = req.query || {};
