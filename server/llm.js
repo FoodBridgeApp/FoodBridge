@@ -1,9 +1,6 @@
 // server/llm.js
 /**
- * LLM client + two helpers:
- *  - llmMakeRecipe: returns { title, ingredients[], steps[], durationSec?, tags? }
- *  - llmSuggestIngredients: returns { ingredients: string[] }
- *
+ * Minimal LLM helpers for FoodBridge.
  * ENV:
  *   OPENAI_API_KEY        (required)
  *   LLM_MODEL=gpt-4o-mini (default)
@@ -18,20 +15,23 @@ if (!API_KEY) {
   console.warn("[llm] OPENAI_API_KEY not set. LLM endpoints will 500 until you add it.");
 }
 
-async function chatJSON(messages) {
+async function chatJSON(system, user, { temperature = 0.2 } = {}) {
   if (!API_KEY) throw new Error("OPENAI_API_KEY missing");
 
   const res = await fetch(API_URL, {
     method: "POST",
     headers: {
-      "authorization": `Bearer ${API_KEY}`,
+      authorization: `Bearer ${API_KEY}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
       model: LLM_MODEL,
-      temperature: 0.2,
+      temperature,
       response_format: { type: "json_object" },
-      messages,
+      messages: [
+        { role: "system", content: system },
+        { role: "user",   content: user   },
+      ],
     }),
   });
 
@@ -50,61 +50,125 @@ async function chatJSON(messages) {
   return { raw: json, parsed };
 }
 
-export async function llmMakeRecipe({ dish, diet = "", context = [] }) {
-  // context is an array of candidate cookbook entries {title, sourceUrl, tags, note, durationSec}
+/**
+ * Classic extractor kept for /ingest.html tester
+ */
+export async function llmExtractItems({ text, sourceUrl = null }) {
   const system = `
-You are a precise recipe normalizer. Always return JSON:
+You are a data normalizer. Return strictly JSON with:
 {
-  "title": string,
-  "ingredients": string[],      // concrete grocery-line items (qty + unit when obvious)
-  "steps": string[],            // clear numbered steps, 1 sentence each
-  "durationSec": number|null,   // total time if obvious, else null
-  "tags": string[]              // include diet and any clear tags like cuisine
+  "items": [
+    { "type":"recipe"|"ingredient", "title":string, "sourceUrl"?:string, "durationSec"?:number }
+  ]
 }
 Rules:
-- NEVER return empty ingredients; if uncertain, infer a sensible, basic set from context.
-- If dish is vague (e.g., "pizza"), produce a standard, minimal vetted version.
-- Respect diet when present (vegan/vegetarian/paleo/gluten-free/dairy-free/keto/pescatarian) and avoid conflicts.
-- Prefer cookbook CONTEXT facts over guesswork. Do NOT invent fancy items absent from context unless typical.
-- Keep ingredients practical for U.S. grocery shopping (no brand names, no exotic items unless obvious).
+- Prefer type:"recipe" for full dishes; use "ingredient" for single items.
+- title is required (short, human-readable).
+- durationSec is total cook time if present; omit if unknown.
+- Include sourceUrl only if known.
+- Never invent items not implied by the text.
+- Keep items count reasonable (1-8).
 `.trim();
 
-  const user = {
-    dish,
-    diet,
-    context, // top matches from your library to ground the LLM
+  const trimmed = String(text || "").slice(0, 120_000);
+  const user = JSON.stringify({ sourceUrl, text: trimmed });
+
+  const { raw, parsed } = await chatJSON(system, user);
+
+  const items = Array.isArray(parsed?.items) ? parsed.items : [];
+  const cleaned = items
+    .map((it) => ({
+      type: it.type === "ingredient" ? "ingredient" : "recipe",
+      title: String(it.title || "").trim(),
+      sourceUrl: it.sourceUrl ? String(it.sourceUrl) : undefined,
+      durationSec: Number.isFinite(it.durationSec) ? Math.max(0, Math.round(it.durationSec)) : undefined,
+    }))
+    .filter((it) => it.title.length > 0);
+
+  return {
+    ok: true,
+    items: cleaned,
+    meta: {
+      model: raw?.model || LLM_MODEL,
+      promptTokens: raw?.usage?.prompt_tokens,
+      completionTokens: raw?.usage?.completion_tokens,
+    },
+  };
+}
+
+/**
+ * New: Make a structured recipe for a {dish, diet} using optional cookbook/library context.
+ * context: array of strings or objects with {title, bullets[]} to guide the model.
+ */
+export async function llmMakeRecipe({ dish, diet = "", context = [] }) {
+  const system = `
+You generate clear, practical recipes. Return strictly JSON:
+{
+  "title": string,
+  "ingredients": string[],      // 5–20 concise lines, quantities when known
+  "steps": string[],            // 4–12 numbered steps, actionable
+  "durationSec": number|null,   // total time in seconds if can be inferred
+  "tags": string[]              // optional helpful tags
+}
+Rules:
+- Keep it realistic for a home cook. If diet is provided, honor it (e.g., Vegan, Gluten-Free).
+- If context is provided, use it to bias ingredient choices and methods, but don't copy verbatim.
+- Never return an empty ingredients list.
+`.trim();
+
+  // normalize context a bit
+  const ctx = Array.isArray(context) ? context : [];
+  const userPayload = {
+    dish: String(dish || ""),
+    diet: String(diet || ""),
+    context: ctx.slice(0, 5).map((c) => {
+      if (typeof c === "string") return { note: c };
+      if (c && typeof c === "object") return c;
+      return { note: String(c) };
+    }),
   };
 
-  const { parsed } = await chatJSON([
-    { role: "system", content: system },
-    { role: "user", content: JSON.stringify(user) },
-  ]);
+  const { parsed, raw } = await chatJSON(system, JSON.stringify(userPayload));
 
-  const title = String(parsed?.title || dish || "Recipe").trim();
+  const title = String(parsed?.title || dish || "").trim() || "Untitled Dish";
   const ingredients = Array.isArray(parsed?.ingredients) ? parsed.ingredients.map(String).filter(Boolean) : [];
   const steps = Array.isArray(parsed?.steps) ? parsed.steps.map(String).filter(Boolean) : [];
   const durationSec = Number.isFinite(parsed?.durationSec) ? Math.max(0, Math.round(parsed.durationSec)) : null;
-  const tags = Array.isArray(parsed?.tags) ? parsed.tags.map(String).filter(Boolean) : (diet ? [diet] : []);
+  const tags = Array.isArray(parsed?.tags) ? parsed.tags.map(String).filter(Boolean) : [];
 
-  return { ok: true, title, ingredients, steps, durationSec, tags, model: LLM_MODEL };
+  return {
+    title,
+    ingredients,
+    steps,
+    durationSec,
+    tags,
+    model: raw?.model || LLM_MODEL,
+  };
 }
 
-export async function llmSuggestIngredients({ query, diet = "" }) {
+/**
+ * New: Suggest ingredients related to a query (used by "Ingredient Suggestions" UI)
+ */
+export async function llmSuggestIngredients({ query = "", diet = "" }) {
   const system = `
-Return JSON: { "ingredients": string[] } with 3–6 concrete items that pair with the query ingredient or dish.
+Return strictly JSON:
+{
+  "query": string,
+  "suggestions": string[] // up to 8 short ingredient names, relevant to query and diet if provided
+}
 Rules:
-- Match the user's query; avoid unrelated pantry oils/spices unless they are core to the pairing.
-- Respect diet if given (vegan/vegetarian/paleo/gluten-free/dairy-free/keto/pescatarian).
-- Keep each item a simple grocery line (no recipes, no brands).
+- Suggestions must be specific grocery items (e.g., "penne", "parmesan", "garlic"), not vague actions.
+- Respect diet constraints (e.g., Vegan -> no meat/dairy; Gluten-Free -> GF pasta/breads).
 `.trim();
 
-  const user = { query, diet };
+  const { parsed } = await chatJSON(system, JSON.stringify({ query, diet }), { temperature: 0.3 });
+  const suggestions = Array.isArray(parsed?.suggestions) ? parsed.suggestions.map(String).filter(Boolean).slice(0, 8) : [];
 
-  const { parsed } = await chatJSON([
-    { role: "system", content: system },
-    { role: "user", content: JSON.stringify(user) },
-  ]);
-
-  const list = Array.isArray(parsed?.ingredients) ? parsed.ingredients.map(String).filter(Boolean) : [];
-  return { ok: true, ingredients: list.slice(0, 8), model: LLM_MODEL };
+  return {
+    ok: true,
+    query: String(parsed?.query || query || ""),
+    suggestions,
+  };
 }
+
+export { chatJSON };
