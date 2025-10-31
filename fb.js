@@ -47,11 +47,64 @@
   const cartItems = document.getElementById("cart-items");
   const checkoutTotal = document.getElementById("checkout-total");
   const btnOptimizeAll = document.getElementById("btn-opt-all");
+  const savingsBox = document.getElementById("savings");
 
-  // Disable Optimize (no pricing yet)
-  if (btnOptimizeAll) {
-    btnOptimizeAll.onclick = () => alert("Optimizer coming soon (pricing not wired yet).");
-    btnOptimizeAll.disabled = true;
+  // ---------- Mock Pricing (category-based + generic placeholder) ----------
+  // Uniform price per category; "generic" is intentionally higher to show savings after Optimize.
+  const CATEGORY_PRICES = {
+    meat: 6.00,
+    seafood: 6.00,
+    poultry: 6.00,
+    dairy: 3.00,
+    vegetables: 1.50,
+    fruit: 1.20,
+    grains: 2.50,
+    pantry: 2.00,
+    bakery: 2.50,
+    spices: 0.50,
+    beverages: 1.00,
+    condiments: 1.50,
+    oils: 2.00,
+    generic: 3.50 // placeholder; Optimize will try to reclassify and reduce
+  };
+
+  // Lightweight keyword map to classify items. Extend as needed.
+  const CATEGORY_KEYWORDS = [
+    { cat: "meat",       rx: /\b(steak|beef|pork|lamb|ground\s+beef|bacon|sausage)\b/i },
+    { cat: "seafood",    rx: /\b(shrimp|salmon|tuna|cod|tilapia|anchovy|sardine|crab)\b/i },
+    { cat: "poultry",    rx: /\b(chicken|turkey)\b/i },
+    { cat: "dairy",      rx: /\b(milk|cheese|mozzarella|cheddar|parmesan|butter|yogurt|cream)\b/i },
+    { cat: "vegetables", rx: /\b(tomato|onion|garlic|pepper|spinach|arugula|lettuce|carrot|broccoli|mushroom|zucchini)\b/i },
+    { cat: "fruit",      rx: /\b(lemon|lime|apple|banana|orange|berries|strawberry|blueberry|avocado)\b/i },
+    { cat: "grains",     rx: /\b(rice|pasta|spaghetti|penne|macaroni|flour|bread|tortilla|dough|crust)\b/i },
+    { cat: "spices",     rx: /\b(salt|pepper|cumin|paprika|chili|oregano|basil|thyme|rosemary|coriander|turmeric|flake)\b/i },
+    { cat: "condiments", rx: /\b(ketchup|mustard|mayo|mayonnaise|salsa|soy\s*sauce|vinegar)\b/i },
+    { cat: "oils",       rx: /\b(olive\s*oil|oil|canola|avocado\s*oil|vegetable\s*oil)\b/i },
+    { cat: "pantry",     rx: /\b(beans|tomato\s*sauce|tomato\s*paste|stock|broth|sugar|yeast|baking\s*powder|baking\s*soda)\b/i },
+    { cat: "bakery",     rx: /\b(bun|roll|baguette|bread|pizza\s*dough|pie\s*crust)\b/i },
+    { cat: "beverages",  rx: /\b(juice|soda|water|coffee|tea)\b/i },
+  ];
+
+  function classifyItem(title) {
+    const t = String(title || "").toLowerCase();
+    for (const { cat, rx } of CATEGORY_KEYWORDS) {
+      if (rx.test(t)) return cat;
+    }
+    return "generic";
+  }
+
+  function priceFor(title) {
+    const cat = classifyItem(title);
+    return CATEGORY_PRICES[cat] ?? CATEGORY_PRICES.generic;
+  }
+
+  // Client-side price cache per cart line title (so we can show totals immediately)
+  const PRICE_CACHE = new Map();
+  function ensurePrice(title) {
+    if (!PRICE_CACHE.has(title)) {
+      PRICE_CACHE.set(title, priceFor(title));
+    }
+    return PRICE_CACHE.get(title);
   }
 
   // ---------- Utils ----------
@@ -117,6 +170,7 @@
     let total = 0;
     if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
       checkoutTotal.textContent = "0.00";
+      if (savingsBox) savingsBox.textContent = "";
       return;
     }
     const frag = document.createDocumentFragment();
@@ -124,9 +178,11 @@
       const li = document.createElement("li");
       li.textContent = it.title || "(untitled)";
       frag.appendChild(li);
+      total += ensurePrice(it.title || "");
     });
     cartItems.appendChild(frag);
     checkoutTotal.textContent = total.toFixed(2);
+    // leave savings box alone here; only update on Optimize
   }
 
   async function refreshCartUI() {
@@ -144,6 +200,9 @@
   async function addToCart(ingredientTitles) {
     const items = normalizeItems(ingredientTitles);
     const existing = getCartId();
+
+    // Pre-fill price cache so totals update immediately
+    ingredientTitles.forEach((t) => ensurePrice(t));
 
     setBusy(true);
     try {
@@ -170,9 +229,8 @@
     }
   }
 
-  // ---------- Strong prompts (because backend is extract-only) ----------
+  // ---------- Strong prompts (because backend is extract-only in your current flow) ----------
   function buildIngredientExtractionTextForDish(dish, diet) {
-    // The server returns items it can infer. Feed it a directive that *forces* ingredients.
     return [
       `Extract a realistic grocery shopping list for a home-cook version of: ${dish}.`,
       diet ? `Dietary style: ${diet}. Honor it when listing ingredients.` : "",
@@ -241,7 +299,7 @@
         ingr.map((t) => ({ type: "ingredient", title: t }))
       ).map((x) => x.title);
 
-      // Lightweight generic steps (until we add a generator endpoint)
+      // Lightweight generic steps (until server returns real ones)
       const steps = [
         "Gather ingredients.",
         "Prep basics (chop/mince/measure).",
@@ -335,7 +393,43 @@
     }
   }
 
-  // ---------- Ingredient Suggestions ----------
+  // ---------- Ingredient Suggestions (Add ONE or ALL) ----------
+  function renderSuggestionList(names) {
+    suggestions.innerHTML = "";
+    if (!names.length) {
+      const li = document.createElement("li");
+      li.textContent = "No suggestions.";
+      suggestions.appendChild(li);
+      return;
+    }
+
+    // Add-All control on top
+    const addAll = document.createElement("button");
+    addAll.className = "btn";
+    addAll.textContent = "Add All";
+    addAll.style.marginBottom = "8px";
+    addAll.onclick = async () => {
+      await addToCart(names);
+    };
+    suggestions.appendChild(addAll);
+
+    names.forEach((name) => {
+      const li = document.createElement("li");
+      li.textContent = name;
+
+      const btn = document.createElement("button");
+      btn.className = "btn";
+      btn.style.marginLeft = "8px";
+      btn.textContent = "+ Add";
+      btn.onclick = async () => {
+        await addToCart([name]);
+      };
+
+      li.appendChild(btn);
+      suggestions.appendChild(li);
+    });
+  }
+
   async function onSuggest() {
     const q = (elQ?.value || "").trim();
     if (!q) {
@@ -369,35 +463,62 @@
         ingr.map((t) => ({ type: "ingredient", title: t }))
       ).map((x) => x.title);
 
-      // Render suggestions with +Add
-      suggestions.innerHTML = "";
-      if (!deduped.length) {
-        const li = document.createElement("li");
-        li.textContent = "No suggestions.";
-        suggestions.appendChild(li);
-      } else {
-        deduped.forEach((name) => {
-          const li = document.createElement("li");
-          li.textContent = name;
-
-          const btn = document.createElement("button");
-          btn.className = "btn";
-          btn.style.marginLeft = "8px";
-          btn.textContent = "+ Add";
-          btn.onclick = async () => {
-            await addToCart([name]);
-          };
-
-          li.appendChild(btn);
-          suggestions.appendChild(li);
-        });
-      }
+      renderSuggestionList(deduped);
     } catch (err) {
       console.error(err);
       alert(`Suggest failed: ${err.message || err}`);
     } finally {
       setBusy(false);
     }
+  }
+
+  // ---------- Optimize All (mock reclassification to reduce generic costs) ----------
+  if (btnOptimizeAll) {
+    btnOptimizeAll.disabled = false;
+    btnOptimizeAll.onclick = async () => {
+      const cid = getCartId();
+      if (!cid) {
+        alert("No cart yet.");
+        return;
+      }
+      try {
+        setBusy(true);
+        const data = await api(`/api/cart/${encodeURIComponent(cid)}`);
+        const items = (data?.cart?.items || []).slice();
+
+        let before = 0;
+        let after = 0;
+
+        // Current totals from PRICE_CACHE (pre-optimization)
+        items.forEach((it) => {
+          before += ensurePrice(it.title || "");
+        });
+
+        // Reclassify each item and set a possibly lower price if it was generic
+        items.forEach((it) => {
+          const title = it.title || "";
+          const old = ensurePrice(title);
+          const newPrice = priceFor(title); // if generic can now map to a specific cat via keywords
+          // If still generic, keep generic price; else set category price (usually <= generic)
+          const finalPrice = newPrice;
+          PRICE_CACHE.set(title, finalPrice);
+          after += finalPrice;
+        });
+
+        // Update UI
+        renderCart({ items });
+        const saved = Math.max(0, before - after);
+        if (savingsBox) {
+          savingsBox.textContent = saved > 0 ? `You saved $${saved.toFixed(2)} (mock optimization)` : "No savings found (mock).";
+        }
+        alert("Optimized (mock). Replace with real pricing when ready.");
+      } catch (err) {
+        console.error(err);
+        alert(`Optimize failed: ${err.message || err}`);
+      } finally {
+        setBusy(false);
+      }
+    };
   }
 
   // ---------- Email / Print ----------
