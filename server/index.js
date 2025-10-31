@@ -1,4 +1,4 @@
-// server/index.js (ESM, full file, no-Redis build)
+﻿// server/index.js (ESM, full file, no-Redis build)
 // Features: health, version, config, logging, email send, templated email,
 //           demo ingest, cart API (memory/redis), cart email summary, export JSON
 //           Optional JWT/HMAC auth via FB_REQUIRE_AUTH="true"
@@ -58,6 +58,9 @@ const ALLOW_ORIGINS = [
    Middleware
    ========================= */
 app.use(
+import ingestLlmRouter from './routes/ingest-llm.js';
+app.use('/api', ingestLlmRouter);
+
   cors({
     credentials: true,
     origin: (origin, cb) => {
@@ -69,6 +72,9 @@ app.use(
 
 // IMPORTANT: capture raw body *without* consuming the stream
 app.use(
+import ingestLlmRouter from './routes/ingest-llm.js';
+app.use('/api', ingestLlmRouter);
+
   express.json({
     limit: "512kb",
     verify: (req, _res, buf) => {
@@ -80,8 +86,14 @@ app.use(
 
 // If you expect form posts too (optional):
 app.use(express.urlencoded({ extended: false }));
+import ingestLlmRouter from './routes/ingest-llm.js';
+app.use('/api', ingestLlmRouter);
+
 
 app.use((req, res, next) => {
+import ingestLlmRouter from './routes/ingest-llm.js';
+app.use('/api', ingestLlmRouter);
+
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.setHeader("Referrer-Policy", "no-referrer");
@@ -90,6 +102,9 @@ app.use((req, res, next) => {
 });
 
 app.use(requestLogger());
+import ingestLlmRouter from './routes/ingest-llm.js';
+app.use('/api', ingestLlmRouter);
+
 
 // ===== Mount LLM ingest router (adds POST /api/ingest/llm) =====
 app.use("/api/ingest", ingestLlmRouter);
@@ -441,11 +456,11 @@ app.post("/api/cart/:cartId/email-summary", authGate(isAuthRequired()), async (r
 
     const html = renderTemplate("cartSummary", {
       title: "Your FoodBridge Cart",
-      intro: "Here’s a summary of your current cart.",
+      intro: "Hereâ€™s a summary of your current cart.",
       cart,
       ctaText: "Open FoodBridge",
       ctaUrl: "https://foodbridgeapp.github.io/FoodBridge",
-      footer: "If this wasn’t you, just ignore this email.",
+      footer: "If this wasnâ€™t you, just ignore this email.",
     });
 
     const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
@@ -485,6 +500,9 @@ app.get("/api/cart/:cartId/export.json", async (req, res) => {
    Error handler (last)
    ========================= */
 app.use((err, req, res, _next) => {
+import ingestLlmRouter from './routes/ingest-llm.js';
+app.use('/api', ingestLlmRouter);
+
   log("uncaught_error", { reqId: req?.id, error: String(err?.stack || err) });
   res.status(500).json({ ok: false, error: "internal_error", reqId: req?.id });
 });
@@ -500,3 +518,4 @@ app.listen(PORT, () => {
     shortCommit: SHORT_COMMIT,
   });
 });
+

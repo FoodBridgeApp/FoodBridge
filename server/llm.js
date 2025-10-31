@@ -1,6 +1,10 @@
 // server/llm.js
 /**
+<<<<<<< HEAD
  * Minimal LLM helpers for FoodBridge.
+=======
+ * Minimal LLM client + normalizer.
+>>>>>>> 3083ca3 (Auto-add ingest-llm route for hybrid LLM-cookbook logic)
  * ENV:
  *   OPENAI_API_KEY        (required)
  *   LLM_MODEL=gpt-4o-mini (default)
@@ -12,21 +16,36 @@ const API_URL   = process.env.LLM_API_URL || "https://api.openai.com/v1/chat/com
 const LLM_MODEL = process.env.LLM_MODEL || "gpt-4o-mini";
 
 if (!API_KEY) {
+<<<<<<< HEAD
   console.warn("[llm] OPENAI_API_KEY not set. LLM endpoints will 500 until you add it.");
 }
 
 async function chatJSON(system, user, { temperature = 0.2 } = {}) {
+=======
+  console.warn("[llm] OPENAI_API_KEY not set. /api/ingest/llm will 500 until you add it.");
+}
+
+export async function chatJSON(system, user) {
+>>>>>>> 3083ca3 (Auto-add ingest-llm route for hybrid LLM-cookbook logic)
   if (!API_KEY) throw new Error("OPENAI_API_KEY missing");
 
   const res = await fetch(API_URL, {
     method: "POST",
     headers: {
+<<<<<<< HEAD
       authorization: `Bearer ${API_KEY}`,
+=======
+      "authorization": `Bearer ${API_KEY}`,
+>>>>>>> 3083ca3 (Auto-add ingest-llm route for hybrid LLM-cookbook logic)
       "content-type": "application/json",
     },
     body: JSON.stringify({
       model: LLM_MODEL,
+<<<<<<< HEAD
       temperature,
+=======
+      temperature: 0.2,
+>>>>>>> 3083ca3 (Auto-add ingest-llm route for hybrid LLM-cookbook logic)
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
@@ -50,9 +69,12 @@ async function chatJSON(system, user, { temperature = 0.2 } = {}) {
   return { raw: json, parsed };
 }
 
+<<<<<<< HEAD
 /**
  * Classic extractor kept for /ingest.html tester
  */
+=======
+>>>>>>> 3083ca3 (Auto-add ingest-llm route for hybrid LLM-cookbook logic)
 export async function llmExtractItems({ text, sourceUrl = null }) {
   const system = `
 You are a data normalizer. Return strictly JSON with:
@@ -70,6 +92,10 @@ Rules:
 - Keep items count reasonable (1-8).
 `.trim();
 
+<<<<<<< HEAD
+=======
+  // keep payload modest for speed/cost (Render timeouts can bite on long calls)
+>>>>>>> 3083ca3 (Auto-add ingest-llm route for hybrid LLM-cookbook logic)
   const trimmed = String(text || "").slice(0, 120_000);
   const user = JSON.stringify({ sourceUrl, text: trimmed });
 
@@ -95,6 +121,7 @@ Rules:
     },
   };
 }
+<<<<<<< HEAD
 
 /**
  * New: Make a structured recipe for a {dish, diet} using optional cookbook/library context.
@@ -172,3 +199,5 @@ Rules:
 }
 
 export { chatJSON };
+=======
+>>>>>>> 3083ca3 (Auto-add ingest-llm route for hybrid LLM-cookbook logic)
