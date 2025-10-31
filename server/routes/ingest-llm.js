@@ -2,7 +2,7 @@
 import express from "express";
 import { llmExtractItems } from "../llm.js";
 
-// Choose the same cart backend your server/index.js uses
+// Choose the same cart backend your main server uses
 const USE_REDIS = String(process.env.CART_BACKEND || "").toLowerCase() === "redis";
 
 let getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems;
@@ -45,16 +45,14 @@ router.post("/llm", async (req, res) => {
       return res.status(400).json({ ok: false, error: "missing_text", reqId });
     }
 
-    // Run LLM extraction (uses your current server/llm.js)
+    // LLM extraction
     const { ok, items, meta } = await llmExtractItems({ text, sourceUrl });
     if (!ok) {
       return res.status(502).json({ ok: false, error: "llm_failed", reqId });
     }
 
-    // Normalize for cart shape
     const normalized = normalizeItems(items);
 
-    // Counters for UI/debug
     const counts = normalized.reduce(
       (acc, it) => {
         acc.total += 1;
@@ -80,7 +78,6 @@ router.post("/llm", async (req, res) => {
       });
     }
 
-    // No cartId provided: just return parsed items
     return res.json({
       ok: true,
       reqId,
@@ -99,7 +96,6 @@ router.post("/llm", async (req, res) => {
       return res.status(500).json({ ok: false, error: "missing_openai_api_key", reqId });
     }
     if (err?.status) {
-      // bubble up OpenAI HTTP errors as 502
       return res.status(502).json({ ok: false, error: "llm_http_error", detail: msg, reqId });
     }
     console.error("llm_ingest_error", err);
