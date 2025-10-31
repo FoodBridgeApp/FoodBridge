@@ -1,418 +1,371 @@
-// ===== FoodBridge frontend (main app) =====
-(function () {
-  // ---------- Config ----------
-  const API_BASE =
-    (typeof window.__FB_API_BASE__ === "string" && window.__FB_API_BASE__) ||
-    (window.FB_CFG && window.FB_CFG.apiBase) ||
-    "https://foodbridge-server-rv0a.onrender.com";
+// server/routes/ingest-llm.js
+// POST /api/ingest/llm
+// Accepts:
+//   { dish?: string, diet?: string, text?: string, sourceUrl?: string, userId?: string, cartId?: string, tags?: string[] }
+// Behavior:
+//   - If dish present: produce full structured recipe (title/ingredients/steps) using LLM with optional cookbook context
+//   - Else: use sourceUrl/text to extract a real recipe (title/ingredients/steps) via LLM
+// Response (both modes):
+//   {
+//     ok: true,
+//     mode: "dish" | "text",
+//     recipe: { title, ingredients: string[], steps: string[], durationSec?: number, tags?: string[], model?: string },
+//     items:  [ { type:"recipe"| "ingredient", title, ... } ]   // Back-compat for /ingest.html & cart code
+//     cart?:  {...},  // if cartId supplied
+//     reqId
+//   }
 
-  const USER_ID = "christian";
-  const LS_CART_ID = "fb_cart_id_v1";
+import express from "express";
+import { appendItemsToCart, normalizeItems } from "../cart.js";
+import { log } from "../logger.js";
+import { chatJSON } from "../llm.js";
 
-  // Show API
-  const apiBaseLabel = document.getElementById("apiBase");
-  if (apiBaseLabel) apiBaseLabel.textContent = API_BASE;
-
-  // ---------- Spinner ----------
-  const spinner = document.getElementById("spinner");
-  function setBusy(v) { if (spinner) spinner.style.display = v ? "flex" : "none"; }
-
-  // ---------- DOM refs ----------
-  const elDish = document.getElementById("dish");
-  const elDiet = document.getElementById("diet");
-  const btnDish = document.getElementById("btnDish");
-  const dishTitle = document.getElementById("dishTitle");
-  const dishMeta = document.getElementById("dishMeta");
-  const dishIngredients = document.getElementById("dishIngredients");
-  const dishSteps = document.getElementById("dishSteps");
-  const btnAddIngredients = document.getElementById("btnAddIngredients");
-
-  const elUrl = document.getElementById("txt-url");
-  const btnIngestUrl = document.getElementById("btn-ingest-url");
-  const urlTitle = document.getElementById("urlTitle");
-  const urlMeta = document.getElementById("urlMeta");
-  const urlIngredients = document.getElementById("urlIngredients");
-  const urlSteps = document.getElementById("urlSteps");
-  const btnAddIngredientsUrl = document.getElementById("btnAddIngredientsUrl");
-
-  const elQ = document.getElementById("q");
-  const btnSuggest = document.getElementById("btn-suggest");
-  const suggestions = document.getElementById("suggestions");
-
-  const cartItems = document.getElementById("cart-items");
-  const checkoutTotal = document.getElementById("checkout-total");
-  const btnOptimizeAll = document.getElementById("btn-opt-all");
-  const savingsBox = document.getElementById("savings");
-
-  // ---------- Mock Pricing ----------
-  const CATEGORY_PRICES = {
-    meat: 6.00, seafood: 6.00, poultry: 6.00,
-    dairy: 3.00, vegetables: 1.50, fruit: 1.20,
-    grains: 2.50, pantry: 2.00, bakery: 2.50,
-    spices: 0.50, beverages: 1.00, condiments: 1.50, oils: 2.00,
-    generic: 3.50
-  };
-  const CATEGORY_KEYWORDS = [
-    { cat: "meat", rx: /\b(steak|beef|pork|lamb|ground\s+beef|bacon|sausage)\b/i },
-    { cat: "seafood", rx: /\b(shrimp|salmon|tuna|cod|tilapia|anchovy|sardine|crab)\b/i },
-    { cat: "poultry", rx: /\b(chicken|turkey)\b/i },
-    { cat: "dairy", rx: /\b(milk|cheese|mozzarella|cheddar|parmesan|butter|yogurt|cream)\b/i },
-    { cat: "vegetables", rx: /\b(tomato|onion|garlic|pepper|spinach|arugula|lettuce|carrot|broccoli|mushroom|zucchini)\b/i },
-    { cat: "fruit", rx: /\b(lemon|lime|apple|banana|orange|berries|strawberry|blueberry|avocado)\b/i },
-    { cat: "grains", rx: /\b(rice|pasta|spaghetti|penne|macaroni|flour|bread|tortilla|dough|crust)\b/i },
-    { cat: "spices", rx: /\b(salt|pepper|cumin|paprika|chili|oregano|basil|thyme|rosemary|coriander|turmeric|flake)\b/i },
-    { cat: "condiments", rx: /\b(ketchup|mustard|mayo|mayonnaise|salsa|soy\s*sauce|vinegar)\b/i },
-    { cat: "oils", rx: /\b(olive\s*oil|oil|canola|avocado\s*oil|vegetable\s*oil)\b/i },
-    { cat: "pantry", rx: /\b(beans|tomato\s*sauce|tomato\s*paste|stock|broth|sugar|yeast|baking\s*powder|baking\s*soda)\b/i },
-    { cat: "bakery", rx: /\b(bun|roll|baguette|bread|pizza\s*dough|pie\s*crust)\b/i },
-    { cat: "beverages", rx: /\b(juice|soda|water|coffee|tea)\b/i },
-  ];
-  const PRICE_CACHE = new Map();
-  function classifyItem(title) {
-    const t = String(title || "").toLowerCase();
-    for (const { cat, rx } of CATEGORY_KEYWORDS) if (rx.test(t)) return cat;
-    return "generic";
+// Optional cookbook context (safe if library.js exists; otherwise we no-op)
+let findCandidates = () => [];
+try {
+  const lib = await import("../library.js");
+  if (typeof lib.findCandidates === "function") {
+    findCandidates = lib.findCandidates;
   }
-  function priceFor(title) {
-    const cat = classifyItem(title);
-    return CATEGORY_PRICES[cat] ?? CATEGORY_PRICES.generic;
-  }
-  function ensurePrice(title) {
-    if (!PRICE_CACHE.has(title)) PRICE_CACHE.set(title, priceFor(title));
-    return PRICE_CACHE.get(title);
-  }
+} catch {
+  // library.js may be minimal in your build; it's okay to continue without context
+}
 
-  // ---------- Utils ----------
-  function dedupeTitles(items) {
-    const seen = new Set();
-    return items.filter((it) => {
-      const k = `${it.type}:${it.title}`.toLowerCase();
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  }
-  async function api(path, opts = {}) {
-    const url = `${API_BASE}${path}`;
+// ---------------------------
+// Small utilities (local)
+// ---------------------------
+function stripTags(s) {
+  return String(s || "")
+    .replace(/<\/?[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function safeFetch(url, { timeoutMs = 8000 } = {}) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
     const res = await fetch(url, {
-      method: "GET",
-      ...opts,
-      headers: { "content-type": "application/json", ...(opts.headers || {}) },
+      signal: ctrl.signal,
+      headers: {
+        // Helps some CDNs return HTML instead of JSON
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
     });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      const msg = data?.error || `HTTP ${res.status}`;
-      const err = new Error(msg); err.status = res.status; err.payload = data; throw err;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+/**
+ * Extremely light text pull from generic HTML; we’re not scraping aggressively
+ * to stay Render-friendly. LLM will do the final parsing.
+ */
+function extractTextCandidates(html) {
+  const text = stripTags(
+    html
+      // kill scripts/styles quickly
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      // keep microdata bits if present
+      .replace(/itemprop="recipeIngredient"[^>]*>(.*?)</gi, " $1 ")
+  );
+  // Trim to a sane payload size
+  return text.slice(0, 120_000);
+}
+
+/**
+ * Build a single, strict instruction for the LLM to return a real recipe.
+ */
+function buildRecipeSystemPrompt() {
+  return `
+You are a precise recipe normalizer. Return STRICTLY valid JSON:
+
+{
+  "title": string,
+  "ingredients": string[],   // 6–24 short grocery-style items
+  "steps": string[],         // 3–10 clear cooking steps, imperative voice
+  "durationSec"?: number,    // total time in seconds if known else omit
+  "tags"?: string[]          // optional keywords (diet, cuisine, etc.)
+}
+
+Rules:
+- "ingredients" must be concrete grocery items (no utensil names, no brand names, no quantities required).
+- "steps" must be real, actionable, specific to the dish (not generic filler).
+- Use source text faithfully; if the source lacks steps, infer minimal plausible steps for the dish.
+- Titles must be human-friendly and concise.
+- Do not invent exotic items that aren’t implied by the source or dish context.
+- JSON ONLY. No extra commentary.
+`.trim();
+}
+
+/**
+ * For Ingredient Suggestions endpoint.
+ */
+function buildSuggestSystemPrompt() {
+  return `
+Return STRICT JSON:
+{ "ingredients": string[] }
+
+Rules:
+- 8–14 short grocery-style ingredients that pair with the query.
+- No brands, no quantities, no utensils.
+- Prefer produce, pantry, proteins, dairy/alt; avoid generic "cooking oil" unless central.
+`.trim();
+}
+
+// Mirror a recipe object into items[] for cart/back-compat
+function mirrorRecipeToItems(recipe, sourceUrl = null) {
+  const items = [];
+  if (recipe?.title) {
+    items.push({
+      type: "recipe",
+      title: recipe.title,
+      sourceUrl: sourceUrl || null,
+      durationSec: Number.isFinite(recipe.durationSec) ? recipe.durationSec : undefined,
+      tags: Array.isArray(recipe.tags) ? recipe.tags.slice(0, 12) : undefined,
+    });
+  }
+  if (Array.isArray(recipe?.ingredients)) {
+    for (const t of recipe.ingredients) {
+      const title = String(t || "").trim();
+      if (title) items.push({ type: "ingredient", title });
     }
-    return data;
   }
-  function getCartId() { return localStorage.getItem(LS_CART_ID) || null; }
-  function setCartId(id) { if (id) localStorage.setItem(LS_CART_ID, id); }
-  async function ensureCartExists() {
-    let cid = getCartId();
-    if (cid) return cid;
-    const data = await api(`/api/cart/upsert`, {
-      method: "POST",
-      body: JSON.stringify({ cartId: null, userId: USER_ID, items: [] }),
-    });
-    cid = data?.cart?.id || null;
-    if (cid) setCartId(cid);
-    return cid;
-  }
+  return items;
+}
 
-  function normalizeItems(rawTitles) {
-    return rawTitles
-      .map((t) => String(t).trim())
-      .filter(Boolean)
-      .map((title) => ({ type: "ingredient", title }));
-  }
+// ---------------------------
+// Router
+// ---------------------------
+const router = express.Router();
 
-  function renderList(el, arr) {
-    el.innerHTML = "";
-    if (!arr || !arr.length) return;
-    const frag = document.createDocumentFragment();
-    arr.forEach((t) => {
-      const li = document.createElement("li");
-      li.textContent = t;
-      frag.appendChild(li);
-    });
-    el.appendChild(frag);
-  }
+// Sanity GET (lets you confirm the route is mounted)
+router.get("/llm", (_req, res) => {
+  res.json({
+    ok: true,
+    info: "POST this endpoint with { dish?, diet?, text?, sourceUrl?, userId?, cartId?, tags? }",
+    mode: ["dish", "text"],
+    examples: {
+      dishFlow: { dish: "fish tacos", diet: "Pescatarian" },
+      textFlow: { sourceUrl: "https://www.instagram.com/p/...", text: "" },
+    },
+  });
+});
 
-  function renderCart(cart) {
-    cartItems.innerHTML = "";
-    let total = 0;
-    if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
-      checkoutTotal.textContent = "0.00";
-      if (savingsBox) savingsBox.textContent = "";
-      return;
-    }
-    const frag = document.createDocumentFragment();
-    cart.items.forEach((it) => {
-      const li = document.createElement("li");
-      li.textContent = it.title || "(untitled)";
-      frag.appendChild(li);
-      total += ensurePrice(it.title || "");
-    });
-    cartItems.appendChild(frag);
-    checkoutTotal.textContent = total.toFixed(2);
-  }
+/**
+ * POST /api/ingest/llm
+ */
+router.post("/llm", async (req, res) => {
+  const reqId = req.id;
+  try {
+    const {
+      dish = "",
+      diet = "",
+      userId = "guest",
+      text = "",
+      sourceUrl = null,
+      cartId = null,
+      tags = [],
+    } = req.body || {};
 
-  async function refreshCartUI() {
-    const cid = getCartId();
-    if (!cid) { renderCart(null); return; }
-    try {
-      const data = await api(`/api/cart/${encodeURIComponent(cid)}`);
-      renderCart(data.cart);
-    } catch (_) {}
-  }
+    const trimmedDish = String(dish || "").trim();
+    let recipeOut = null;
 
-  async function addToCart(ingredientTitles) {
-    if (!ingredientTitles || ingredientTitles.length === 0) return;
-    ingredientTitles.forEach((t) => ensurePrice(t)); // prefill prices
-    setBusy(true);
-    try {
-      const cid = await ensureCartExists();
-      const data = await api(`/api/cart/${encodeURIComponent(cid)}/items`, {
-        method: "POST",
-        body: JSON.stringify({ userId: USER_ID, items: normalizeItems(ingredientTitles) }),
-      });
-      renderCart(data.cart);
-    } catch (err) {
-      console.error(err); alert(`Add to cart failed: ${err.message || err}`);
-    } finally { setBusy(false); }
-  }
-
-  // ---------- Strong prompts ----------
-  function buildIngredientExtractionTextForDish(dish, diet) {
-    return [
-      `Extract a realistic grocery shopping list for a home-cook version of: ${dish}.`,
-      diet ? `Dietary style: ${diet}. Honor it when listing ingredients.` : "",
-      `Return 10–18 short ingredient names (grocery list).`,
-      `Include bases/essentials (e.g., for pizza include dough/crust, sauce, cheese, toppings).`,
-      `No utensils, no brands, no quantities. Only ingredients and/or a single recipe title.`,
-    ].filter(Boolean).join("\n");
-  }
-  function buildIngredientExtractionTextForQuery(query) {
-    return [
-      `Suggest ingredients commonly used with: ${query}.`,
-      `Return 8–14 short ingredient names (grocery list style).`,
-      `Prefer produce, pantry, protein, dairy/alt; avoid generic oils unless central.`,
-      `No utensils, brands, or quantities.`,
-    ].join("\n");
-  }
-  function strictRetrySuffix() {
-    return `IMPORTANT: If you returned no ingredients, try again and return ONLY "ingredient" items (8–18) as plain grocery terms.`;
-  }
-
-  // ---------- Generate (AI Recipe) ----------
-  async function onGenerate() {
-    const dish = (elDish?.value || "").trim();
-    const diet = (elDiet?.value || "").trim();
-    if (!dish) { alert("Type a dish name first."); return; }
-
-    setBusy(true);
-    try {
-      let text = buildIngredientExtractionTextForDish(dish, diet);
-      let data = await api(`/api/ingest/llm`, {
-        method: "POST",
-        body: JSON.stringify({ userId: USER_ID, text, sourceUrl: null }),
-      });
-
-      let ingr = (data.items || []).filter(x => x.type === "ingredient").map(x => x.title);
-      if (ingr.length === 0) {
-        text += "\n" + strictRetrySuffix();
-        data = await api(`/api/ingest/llm`, {
-          method: "POST",
-          body: JSON.stringify({ userId: USER_ID, text, sourceUrl: null }),
-        });
-        ingr = (data.items || []).filter(x => x.type === "ingredient").map(x => x.title);
-      }
-
-      const recipeItem = (data.items || []).find(x => x.type === "recipe");
-      const title = recipeItem?.title || dish;
-      const deduped = dedupeTitles(ingr.map(t => ({ type: "ingredient", title: t }))).map(x => x.title);
-
-      const steps = [ "Gather ingredients.", "Prep basics (chop/mince/measure).", "Cook main component until done.", "Combine and adjust seasoning.", "Serve." ];
-
-      dishTitle.textContent = title;
-      dishMeta.textContent = diet ? `Diet: ${diet}` : "";
-      renderList(dishIngredients, deduped);
-      renderList(dishSteps, steps);
-
-      btnAddIngredients.disabled = deduped.length === 0;
-      btnAddIngredients.onclick = async () => { await addToCart(deduped); };
-    } catch (err) {
-      console.error(err); alert(`Generate failed: ${err.message || err}`);
-    } finally { setBusy(false); }
-  }
-
-  // ---------- Import from URL ----------
-  async function onImportUrl() {
-    const u = (elUrl?.value || "").trim();
-    if (!u) { alert("Paste a URL first."); return; }
-
-    setBusy(true);
-    try {
-      // Server will now fetch & parse the URL, so plain directive is enough
-      let text = `Extract the recipe name and the ingredient list from this source.`;
-      let data = await api(`/api/ingest/llm`, {
-        method: "POST",
-        body: JSON.stringify({ userId: USER_ID, text, sourceUrl: u }),
-      });
-
-      let ingr = (data.items || []).filter(x => x.type === "ingredient").map(x => x.title);
-      if (ingr.length === 0) {
-        text += "\n" + strictRetrySuffix();
-        data = await api(`/api/ingest/llm`, {
-          method: "POST",
-          body: JSON.stringify({ userId: USER_ID, text, sourceUrl: u }),
-        });
-        ingr = (data.items || []).filter(x => x.type === "ingredient").map(x => x.title);
-      }
-
-      const recipeItem = (data.items || []).find(x => x.type === "recipe");
-      const title = recipeItem?.title || (data?.meta?.titleHint || "Imported Recipe");
-      const deduped = dedupeTitles(ingr.map(t => ({ type: "ingredient", title: t }))).map(x => x.title);
-
-      const steps = [
-        "Open the source link for full steps.",
-        "Prepare ingredients as required.",
-        "Cook/assemble per the source.",
-        "Adjust seasoning and serve.",
-      ];
-
-      urlTitle.textContent = title;
-      urlMeta.textContent = u;
-      renderList(urlIngredients, deduped);
-      renderList(urlSteps, steps);
-
-      btnAddIngredientsUrl.disabled = deduped.length === 0;
-      btnAddIngredientsUrl.onclick = async () => { await addToCart(deduped); };
-    } catch (err) {
-      console.error(err); alert(`Import failed: ${err.message || err}`);
-    } finally { setBusy(false); }
-  }
-
-  // ---------- Suggestions with checkboxes + Add Selected / Add All ----------
-  function renderSuggestionList(names) {
-    suggestions.innerHTML = "";
-    if (!names.length) {
-      const li = document.createElement("li"); li.textContent = "No suggestions."; suggestions.appendChild(li);
-      return;
-    }
-
-    // Controls
-    const controls = document.createElement("div");
-    controls.style.marginBottom = "8px";
-    const addAll = document.createElement("button");
-    addAll.className = "btn"; addAll.textContent = "Add All";
-    addAll.onclick = async () => { await addToCart(names); };
-    const addSel = document.createElement("button");
-    addSel.className = "btn"; addSel.textContent = "Add Selected";
-    addSel.style.marginLeft = "8px";
-    addSel.onclick = async () => {
-      const picked = [];
-      suggestions.querySelectorAll('input[type="checkbox"]').forEach(cb => { if (cb.checked) picked.push(cb.value); });
-      if (!picked.length) { alert("Select at least one item."); return; }
-      await addToCart(picked);
-    };
-    controls.appendChild(addAll); controls.appendChild(addSel);
-    suggestions.appendChild(controls);
-
-    // List
-    names.forEach((name) => {
-      const li = document.createElement("li");
-      const cb = document.createElement("input"); cb.type = "checkbox"; cb.value = name; cb.style.marginRight = "8px";
-      const label = document.createElement("span"); label.textContent = name;
-      const btn = document.createElement("button"); btn.className = "btn"; btn.style.marginLeft = "8px"; btn.textContent = "+ Add";
-      btn.onclick = async () => { await addToCart([name]); };
-      li.appendChild(cb); li.appendChild(label); li.appendChild(btn);
-      suggestions.appendChild(li);
-    });
-  }
-
-  async function onSuggest() {
-    const q = (elQ?.value || "").trim();
-    if (!q) { alert('Type a query (e.g., "pasta").'); return; }
-    setBusy(true);
-    try {
-      let text = buildIngredientExtractionTextForQuery(q);
-      let data = await api(`/api/ingest/llm`, {
-        method: "POST",
-        body: JSON.stringify({ userId: USER_ID, text, sourceUrl: null }),
-      });
-
-      let ingr = (data.items || []).filter(x => x.type === "ingredient").map(x => x.title);
-      if (ingr.length === 0) {
-        text = buildIngredientExtractionTextForQuery(q) + "\n" + strictRetrySuffix();
-        data = await api(`/api/ingest/llm`, {
-          method: "POST",
-          body: JSON.stringify({ userId: USER_ID, text, sourceUrl: null }),
-        });
-        ingr = (data.items || []).filter(x => x.type === "ingredient").map(x => x.title);
-      }
-
-      const deduped = dedupeTitles(ingr.map(t => ({ type: "ingredient", title: t }))).map(x => x.title);
-      renderSuggestionList(deduped);
-    } catch (err) {
-      console.error(err); alert(`Suggest failed: ${err.message || err}`);
-    } finally { setBusy(false); }
-  }
-
-  // ---------- Optimize (auto-creates cart if needed) ----------
-  if (btnOptimizeAll) {
-    btnOptimizeAll.disabled = false;
-    btnOptimizeAll.onclick = async () => {
+    // ================
+    // A) Dish Mode
+    // ================
+    if (trimmedDish) {
+      // optional cookbook grounding
+      let contextLines = [];
       try {
-        setBusy(true);
-        const cid = await ensureCartExists();
-        const data = await api(`/api/cart/${encodeURIComponent(cid)}`);
-        const items = (data?.cart?.items || []).slice();
+        const ctx = findCandidates({ query: trimmedDish, diet }, { limit: 5 }) || [];
+        contextLines = ctx.map((c, i) => `• ${c.title || c.name || c.tag || `candidate_${i + 1}`}`);
+      } catch {
+        // ignore context errors
+      }
 
-        let before = 0; let after = 0;
-        items.forEach((it) => { before += ensurePrice(it.title || ""); });
-        items.forEach((it) => {
-          const title = it.title || "";
-          const newPrice = priceFor(title);
-          PRICE_CACHE.set(title, newPrice);
-          after += newPrice;
+      const system = buildRecipeSystemPrompt();
+      const userMsg = JSON.stringify({
+        intent: "make_recipe",
+        dish: trimmedDish,
+        diet: String(diet || ""),
+        notes: [
+          contextLines.length ? `COOKBOOK CONTEXT:\n${contextLines.join("\n")}` : "",
+          "Return ingredients[] and steps[] as described.",
+        ].filter(Boolean).join("\n\n"),
+      });
+
+      const { parsed, raw } = await chatJSON(system, userMsg);
+      recipeOut = {
+        title: String(parsed?.title || trimmedDish).trim() || trimmedDish,
+        ingredients: Array.isArray(parsed?.ingredients) ? parsed.ingredients.map(String) : [],
+        steps: Array.isArray(parsed?.steps) ? parsed.steps.map(String) : [],
+        durationSec: Number.isFinite(parsed?.durationSec) ? Math.max(0, Math.round(parsed.durationSec)) : undefined,
+        tags: Array.isArray(parsed?.tags) ? parsed.tags.slice(0, 12) : undefined,
+        model: raw?.model,
+      };
+
+      // Build items for cart/back-compat
+      const items = mirrorRecipeToItems(recipeOut, sourceUrl);
+      const normalized = normalizeItems(items);
+
+      let attachedCart = null;
+      if (cartId && normalized.length) {
+        attachedCart = await appendItemsToCart({
+          cartId: String(cartId),
+          userId: String(userId),
+          items: normalized,
         });
+      }
 
-        renderCart({ items });
-        const saved = Math.max(0, before - after);
-        if (savingsBox) savingsBox.textContent = saved > 0 ? `You saved $${saved.toFixed(2)} (mock optimization)` : "No savings found (mock).";
-        alert("Optimized (mock). Replace with real pricing when ready.");
-      } catch (err) {
-        console.error(err); alert(`Optimize failed: ${err.message || err}`);
-      } finally { setBusy(false); }
-    };
-  }
+      log("llm_recipe_ok", { reqId, dish: trimmedDish, diet, withContext: contextLines.length });
+      return res.json({
+        ok: true,
+        reqId,
+        mode: "dish",
+        recipe: recipeOut,
+        items,          // keep items for any older UI code that expects it
+        cart: attachedCart,
+      });
+    }
 
-  // ---------- Email / Print ----------
-  const btnPrint = document.getElementById("btn-print");
-  if (btnPrint) btnPrint.onclick = () => window.print();
-  const btnEmail = document.getElementById("btn-email");
-  if (btnEmail) {
-    btnEmail.onclick = async () => {
+    // ================
+    // B) Text/URL Mode
+    // ================
+    let workingText = String(text || "");
+    let titleHint = null;
+
+    if (sourceUrl) {
       try {
-        setBusy(true);
-        const cid = await ensureCartExists();
-        const to = prompt("Send cart to which email?"); if (!to) return;
-        await api(`/api/cart/${encodeURIComponent(cid)}/email-summary`, {
-          method: "POST",
-          body: JSON.stringify({ to, subject: "Your FoodBridge Cart" }),
-        });
-        alert("Email sent.");
-      } catch (err) {
-        console.error(err); alert(`Email failed: ${err.message || err}`);
-      } finally { setBusy(false); }
-    };
-  }
+        const html = await safeFetch(String(sourceUrl));
 
-  // ---------- Hooks ----------
-  if (btnDish) btnDish.addEventListener("click", onGenerate);
-  if (btnIngestUrl) btnIngestUrl.addEventListener("click", onImportUrl);
-  if (btnSuggest) btnSuggest.addEventListener("click", onSuggest);
-  document.addEventListener("DOMContentLoaded", refreshCartUI);
-})();
+        // --- Instagram caption fallback ---
+        if (/instagram\.com/i.test(sourceUrl)) {
+          // Try modern JSON key first
+          let caption = null;
+          // Old edge_media_to_caption format
+          const legacy = html.match(/"edge_media_to_caption":\s*\{"edges":\s*\[\{"node":\{"text":"([^"]+)/);
+          if (legacy && legacy[1]) {
+            caption = legacy[1];
+          } else {
+            // Some deployments have a "caption":"...","shortcode_media" block
+            const newer = html.match(/"shortcode_media":\{[\s\S]*?"accessibility_caption":"[^"]*",[\s\S]*?"edge_media_to_caption":\{"edges":\[\{"node":\{"text":"([^"]+)/);
+            if (newer && newer[1]) caption = newer[1];
+          }
+          if (caption) {
+            const clean = caption.replace(/\\n/g, "\n");
+            workingText = `Instagram caption detected:\n${clean}\n\nTASK: Extract real recipe title, ingredients[], and steps[].`;
+          } else {
+            // Fallback minimal instruction
+            workingText = `Instagram link: ${sourceUrl}\nCaption hidden; infer plausible title, ingredients, and steps for the visible dish.`;
+          }
+        } else {
+          // Generic HTML
+          const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+          titleHint = titleMatch ? stripTags(titleMatch[1]) : null;
+          const extracted = extractTextCandidates(html);
+          workingText = [
+            `SOURCE URL: ${sourceUrl}`,
+            titleHint ? `PAGE TITLE: ${titleHint}` : "",
+            "",
+            `EXTRACTED TEXT:`,
+            extracted || "(none)",
+            "",
+            `TASK: Return the recipe title, ingredients[], and steps[].`,
+          ].join("\n");
+        }
+      } catch {
+        if (!workingText) {
+          workingText = `Infer a plausible recipe (title, ingredients[], steps[]) for: ${sourceUrl}`;
+        }
+      }
+    } else if (!workingText) {
+      workingText = "No source provided. Infer nothing.";
+    }
+
+    const system = buildRecipeSystemPrompt();
+    const userMsg = JSON.stringify({
+      intent: "normalize_recipe_from_source",
+      sourceUrl,
+      text: String(workingText || "").slice(0, 120_000),
+      hintTitle: titleHint || null,
+    });
+
+    const { parsed, raw } = await chatJSON(system, userMsg);
+
+    recipeOut = {
+      title: String(parsed?.title || titleHint || "Imported Recipe").trim(),
+      ingredients: Array.isArray(parsed?.ingredients) ? parsed.ingredients.map(String) : [],
+      steps: Array.isArray(parsed?.steps) ? parsed.steps.map(String) : [],
+      durationSec: Number.isFinite(parsed?.durationSec) ? Math.max(0, Math.round(parsed.durationSec)) : undefined,
+      tags: Array.isArray(parsed?.tags) ? parsed.tags.slice(0, 12) : undefined,
+      model: raw?.model,
+    };
+
+    // Also mirror to items[] for back-compat with any UI that expects it
+    const items = mirrorRecipeToItems(recipeOut, sourceUrl);
+    const normalized = normalizeItems(items);
+
+    let attachedCart = null;
+    if (cartId && normalized.length) {
+      attachedCart = await appendItemsToCart({
+        cartId: String(cartId),
+        userId: String(userId),
+        items: normalized,
+      });
+    }
+
+    log("llm_extract_ok", { reqId, totalItems: normalized.length, hasSteps: Array.isArray(recipeOut.steps) && recipeOut.steps.length > 0 });
+    return res.json({
+      ok: true,
+      reqId,
+      mode: "text",
+      recipe: recipeOut,
+      items,
+      cart: attachedCart,
+    });
+  } catch (err) {
+    log("llm_ingest_error", { reqId, error: String(err?.message || err) });
+    return res.status(500).json({ ok: false, error: "ingest_failed", reqId });
+  }
+});
+
+// ---------------------------
+// Ingredient Suggestions
+// ---------------------------
+router.get("/ingredients/suggest", async (req, res) => {
+  const reqId = req.id;
+  try {
+    const q = String((req.query?.q || "")).trim();
+    const diet = String((req.query?.diet || "")).trim();
+
+    const system = buildSuggestSystemPrompt();
+    const userMsg = JSON.stringify({
+      intent: "ingredient_suggestions",
+      query: q,
+      diet,
+    });
+
+    const { parsed, raw } = await chatJSON(system, userMsg);
+    const ingredients = Array.isArray(parsed?.ingredients)
+      ? parsed.ingredients.map((s) => String(s || "").trim()).filter(Boolean).slice(0, 20)
+      : [];
+
+    res.json({
+      ok: true,
+      reqId,
+      ingredients,
+      model: raw?.model,
+    });
+  } catch (e) {
+    log("ingredients_suggest_error", { reqId, error: String(e?.message || e) });
+    res.status(500).json({ ok: false, error: "suggest_failed", reqId });
+  }
+});
+
+export default router;
