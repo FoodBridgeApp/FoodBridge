@@ -1,8 +1,7 @@
-﻿/**
- * server/llm.js  — tiny deterministic recipe generator used by /api/ingest/llm
+/**
+ * server/llm.js — tiny deterministic recipe generator used by /api/ingest/llm
  * ESM module (importable from .mjs routes)
  */
-
 export async function generateRecipe({ dish = "", diet = "", withContext = false, context = "" } = {}) {
   const title = titleCase(dish || "Recipe");
   const base = [
@@ -10,7 +9,6 @@ export async function generateRecipe({ dish = "", diet = "", withContext = false
     { name: "salt", qty: 1, unit: "tsp", type: "ingredient" },
     { name: "black pepper", qty: 0.5, unit: "tsp", type: "ingredient" },
   ];
-
   const main = dish ? [{ name: dish.toLowerCase(), qty: 1, unit: "", type: "main" }] : [];
   const ingredients = [...main, ...base];
 
