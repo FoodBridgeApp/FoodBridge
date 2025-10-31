@@ -1,371 +1,463 @@
-// server/routes/ingest-llm.js
-// POST /api/ingest/llm
-// Accepts:
-//   { dish?: string, diet?: string, text?: string, sourceUrl?: string, userId?: string, cartId?: string, tags?: string[] }
-// Behavior:
-//   - If dish present: produce full structured recipe (title/ingredients/steps) using LLM with optional cookbook context
-//   - Else: use sourceUrl/text to extract a real recipe (title/ingredients/steps) via LLM
-// Response (both modes):
-//   {
-//     ok: true,
-//     mode: "dish" | "text",
-//     recipe: { title, ingredients: string[], steps: string[], durationSec?: number, tags?: string[], model?: string },
-//     items:  [ { type:"recipe"| "ingredient", title, ... } ]   // Back-compat for /ingest.html & cart code
-//     cart?:  {...},  // if cartId supplied
-//     reqId
-//   }
+// ===== FoodBridge frontend (main app) =====
+// Talks to server at window.__FB_API_BASE__ (from config.js)
 
-import express from "express";
-import { appendItemsToCart, normalizeItems } from "../cart.js";
-import { log } from "../logger.js";
-import { chatJSON } from "../llm.js";
+(function () {
+  // ---------- Config ----------
+  const API_BASE =
+    (typeof window.__FB_API_BASE__ === "string" && window.__FB_API_BASE__) ||
+    "https://foodbridge-server-rv0a.onrender.com";
 
-// Optional cookbook context (safe if library.js exists; otherwise we no-op)
-let findCandidates = () => [];
-try {
-  const lib = await import("../library.js");
-  if (typeof lib.findCandidates === "function") {
-    findCandidates = lib.findCandidates;
+  const USER_ID = "christian";
+  const LS_CART_ID = "fb_cart_id_v1";
+
+  // Mock pricing config (client-side only)
+  const CATEGORY_PRICES = {
+    meat: 8.0,
+    seafood: 9.0,
+    dairy: 4.0,
+    produce: 2.0,
+    bakery: 3.5,
+    grains: 3.0,
+    pantry: 3.0,
+    spices: 1.5,
+    beverages: 2.5,
+    frozen: 4.5,
+    other: 3.0,
+  };
+  const GENERIC_DISCOUNT = 0.15; // 15% cheaper generics
+  const BRAND_HINTS = ["kraft", "barilla", "rao", "heinz", "oreo", "kerrygold", "tillamook", "pepsi", "coke"];
+
+  // Show API in header
+  const apiBaseLabel = document.getElementById("apiBase");
+  if (apiBaseLabel) apiBaseLabel.textContent = API_BASE;
+
+  // ---------- Spinner ----------
+  const spinner = document.getElementById("spinner");
+  function setBusy(isBusy) {
+    if (spinner) spinner.style.display = isBusy ? "flex" : "none";
   }
-} catch {
-  // library.js may be minimal in your build; it's okay to continue without context
-}
 
-// ---------------------------
-// Small utilities (local)
-// ---------------------------
-function stripTags(s) {
-  return String(s || "")
-    .replace(/<\/?[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+  // ---------- DOM refs ----------
+  const elDish = document.getElementById("dish");
+  const elDiet = document.getElementById("diet");
+  const btnDish = document.getElementById("btnDish");
+  const dishTitle = document.getElementById("dishTitle");
+  const dishMeta = document.getElementById("dishMeta");
+  const dishIngredients = document.getElementById("dishIngredients");
+  const dishSteps = document.getElementById("dishSteps");
+  const btnAddIngredients = document.getElementById("btnAddIngredients");
 
-async function safeFetch(url, { timeoutMs = 8000 } = {}) {
-  const ctrl = new AbortController();
-  const id = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      headers: {
-        // Helps some CDNs return HTML instead of JSON
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.text();
-  } finally {
-    clearTimeout(id);
+  const elUrl = document.getElementById("txt-url");
+  const btnIngestUrl = document.getElementById("btn-ingest-url");
+  const urlTitle = document.getElementById("urlTitle");
+  const urlMeta = document.getElementById("urlMeta");
+  const urlIngredients = document.getElementById("urlIngredients");
+  const urlSteps = document.getElementById("urlSteps");
+  const btnAddIngredientsUrl = document.getElementById("btnAddIngredientsUrl");
+
+  const elQ = document.getElementById("q");
+  const btnSuggest = document.getElementById("btn-suggest");
+  const suggestions = document.getElementById("suggestions");
+
+  const cartItems = document.getElementById("cart-items");
+  const checkoutTotal = document.getElementById("checkout-total");
+  const btnOptimizeAll = document.getElementById("btn-opt-all");
+  const savingsBox = document.getElementById("savings");
+
+  // Local enrichment store (title -> {category, basePrice, price, optimized})
+  const priceCache = new Map();
+
+  // ---------- Helpers ----------
+  function normalize(s) {
+    return String(s || "").toLowerCase();
   }
-}
 
-/**
- * Extremely light text pull from generic HTML; we’re not scraping aggressively
- * to stay Render-friendly. LLM will do the final parsing.
- */
-function extractTextCandidates(html) {
-  const text = stripTags(
-    html
-      // kill scripts/styles quickly
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      // keep microdata bits if present
-      .replace(/itemprop="recipeIngredient"[^>]*>(.*?)</gi, " $1 ")
-  );
-  // Trim to a sane payload size
-  return text.slice(0, 120_000);
-}
+  function categorizeIngredient(title) {
+    const t = normalize(title);
 
-/**
- * Build a single, strict instruction for the LLM to return a real recipe.
- */
-function buildRecipeSystemPrompt() {
-  return `
-You are a precise recipe normalizer. Return STRICTLY valid JSON:
+    // Meat / seafood
+    if (/(beef|chicken|pork|turkey|steak|ground|bacon|sausage|ham|lamb)/.test(t)) return "meat";
+    if (/(salmon|shrimp|tuna|cod|tilapia|sardine|anchovy|fish)/.test(t)) return "seafood";
 
-{
-  "title": string,
-  "ingredients": string[],   // 6–24 short grocery-style items
-  "steps": string[],         // 3–10 clear cooking steps, imperative voice
-  "durationSec"?: number,    // total time in seconds if known else omit
-  "tags"?: string[]          // optional keywords (diet, cuisine, etc.)
-}
+    // Dairy / eggs
+    if (/(milk|cheese|mozzarella|cheddar|parmesan|parmigiano|butter|yogurt|cream|half[-\s]?and[-\s]?half|egg)/.test(t))
+      return "dairy";
 
-Rules:
-- "ingredients" must be concrete grocery items (no utensil names, no brand names, no quantities required).
-- "steps" must be real, actionable, specific to the dish (not generic filler).
-- Use source text faithfully; if the source lacks steps, infer minimal plausible steps for the dish.
-- Titles must be human-friendly and concise.
-- Do not invent exotic items that aren’t implied by the source or dish context.
-- JSON ONLY. No extra commentary.
-`.trim();
-}
+    // Produce
+    if (/(tomato|onion|garlic|pepper|bell pepper|jalape|lettuce|spinach|kale|carrot|celery|herb|basil|cilantro|parsley|lemon|lime|avocado|potato|mushroom|cucumber|zucchini|broccoli|cauliflower)/.test(t))
+      return "produce";
 
-/**
- * For Ingredient Suggestions endpoint.
- */
-function buildSuggestSystemPrompt() {
-  return `
-Return STRICT JSON:
-{ "ingredients": string[] }
+    // Bakery / bread
+    if (/(bread|bun|tortilla|pita|baguette|roll|crust|pizza dough|dough)/.test(t)) return "bakery";
 
-Rules:
-- 8–14 short grocery-style ingredients that pair with the query.
-- No brands, no quantities, no utensils.
-- Prefer produce, pantry, proteins, dairy/alt; avoid generic "cooking oil" unless central.
-`.trim();
-}
+    // Grains / pasta
+    if (/(pasta|spaghetti|penne|rigatoni|macaroni|noodle|rice|quinoa|farro|couscous|oats|flour|cornmeal)/.test(t))
+      return "grains";
 
-// Mirror a recipe object into items[] for cart/back-compat
-function mirrorRecipeToItems(recipe, sourceUrl = null) {
-  const items = [];
-  if (recipe?.title) {
-    items.push({
-      type: "recipe",
-      title: recipe.title,
-      sourceUrl: sourceUrl || null,
-      durationSec: Number.isFinite(recipe.durationSec) ? recipe.durationSec : undefined,
-      tags: Array.isArray(recipe.tags) ? recipe.tags.slice(0, 12) : undefined,
-    });
+    // Spices / seasoning
+    if (/(salt|pepper|oregano|basil|cumin|paprika|chili|flake|turmeric|coriander|clove|cinnamon)/.test(t))
+      return "spices";
+
+    // Pantry / oils / canned / sauces
+    if (/(olive oil|oil|vinegar|soy sauce|sauce|ketchup|mustard|mayonnaise|mayo|stock|broth|beans|tomato paste|tomato sauce|canned|jarred|sugar|honey|yeast|baking powder|baking soda)/.test(t))
+      return "pantry";
+
+    // Frozen / beverages heuristic
+    if (/(frozen|ice cream)/.test(t)) return "frozen";
+    if (/(juice|soda|coffee|tea)/.test(t)) return "beverages";
+
+    return "other";
   }
-  if (Array.isArray(recipe?.ingredients)) {
-    for (const t of recipe.ingredients) {
-      const title = String(t || "").trim();
-      if (title) items.push({ type: "ingredient", title });
+
+  function computeBasePrice(title) {
+    const cat = categorizeIngredient(title);
+    const base = CATEGORY_PRICES[cat] ?? CATEGORY_PRICES.other;
+    return { category: cat, basePrice: base };
+  }
+
+  function looksLikeBrand(title) {
+    const t = normalize(title);
+    return BRAND_HINTS.some((b) => t.includes(b));
+  }
+
+  function ensureEnriched(itemTitle) {
+    const key = itemTitle.trim();
+    if (priceCache.has(key)) return priceCache.get(key);
+    const { category, basePrice } = computeBasePrice(key);
+    const isBrand = looksLikeBrand(key);
+    const price = basePrice * (isBrand ? 1.0 : 1.0); // initial (pre-optimization)
+    const enriched = { category, basePrice, price, optimized: false, genericApplied: false };
+    priceCache.set(key, enriched);
+    return enriched;
     }
+
+  function formatMoney(n) {
+    return (Number.isFinite(n) ? n : 0).toFixed(2);
   }
-  return items;
-}
 
-// ---------------------------
-// Router
-// ---------------------------
-const router = express.Router();
+  function dedupeTitles(items) {
+    const seen = new Set();
+    return items.filter((it) => {
+      const key = `${it.type}:${normalize(it.title)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
 
-// Sanity GET (lets you confirm the route is mounted)
-router.get("/llm", (_req, res) => {
-  res.json({
-    ok: true,
-    info: "POST this endpoint with { dish?, diet?, text?, sourceUrl?, userId?, cartId?, tags? }",
-    mode: ["dish", "text"],
-    examples: {
-      dishFlow: { dish: "fish tacos", diet: "Pescatarian" },
-      textFlow: { sourceUrl: "https://www.instagram.com/p/...", text: "" },
-    },
-  });
-});
+  async function api(path, opts = {}) {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "GET",
+      ...opts,
+      headers: { "content-type": "application/json", ...(opts.headers || {}) },
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    return data;
+  }
 
-/**
- * POST /api/ingest/llm
- */
-router.post("/llm", async (req, res) => {
-  const reqId = req.id;
-  try {
-    const {
-      dish = "",
-      diet = "",
-      userId = "guest",
-      text = "",
-      sourceUrl = null,
-      cartId = null,
-      tags = [],
-    } = req.body || {};
+  function getCartId() {
+    return localStorage.getItem(LS_CART_ID);
+  }
+  function setCartId(id) {
+    if (id) localStorage.setItem(LS_CART_ID, id);
+  }
 
-    const trimmedDish = String(dish || "").trim();
-    let recipeOut = null;
+  function normalizeItems(titles) {
+    return titles
+      .map((t) => String(t).trim())
+      .filter(Boolean)
+      .map((title) => ({ type: "ingredient", title }));
+  }
 
-    // ================
-    // A) Dish Mode
-    // ================
-    if (trimmedDish) {
-      // optional cookbook grounding
-      let contextLines = [];
-      try {
-        const ctx = findCandidates({ query: trimmedDish, diet }, { limit: 5 }) || [];
-        contextLines = ctx.map((c, i) => `• ${c.title || c.name || c.tag || `candidate_${i + 1}`}`);
-      } catch {
-        // ignore context errors
+  // ---------- Cart UI ----------
+  function renderCart(cart) {
+    cartItems.innerHTML = "";
+    savingsBox.textContent = "";
+
+    if (!cart?.items?.length) {
+      checkoutTotal.textContent = "0.00";
+      if (btnOptimizeAll) btnOptimizeAll.disabled = true;
+      return;
+    }
+
+    let subtotal = 0;
+    let total = 0;
+    let totalGenericSavings = 0;
+
+    const frag = document.createDocumentFragment();
+    cart.items.forEach((it) => {
+      const title = it.title || "(untitled)";
+      const info = ensureEnriched(title);
+
+      // Subtotal is the original (non-optimized) sum
+      subtotal += info.basePrice;
+
+      // Total uses current price (may be optimized already)
+      total += info.price;
+
+      if (info.genericApplied) {
+        totalGenericSavings += info.basePrice - info.price;
       }
 
-      const system = buildRecipeSystemPrompt();
-      const userMsg = JSON.stringify({
-        intent: "make_recipe",
-        dish: trimmedDish,
-        diet: String(diet || ""),
-        notes: [
-          contextLines.length ? `COOKBOOK CONTEXT:\n${contextLines.join("\n")}` : "",
-          "Return ingredients[] and steps[] as described.",
-        ].filter(Boolean).join("\n\n"),
+      const li = document.createElement("li");
+      li.style.display = "flex";
+      li.style.justifyContent = "space-between";
+      li.style.alignItems = "center";
+      li.style.gap = "8px";
+
+      const left = document.createElement("div");
+      left.textContent = title + `  ·  ${info.category}`;
+
+      const right = document.createElement("div");
+      right.textContent = `$${formatMoney(info.price)}`;
+      right.style.fontVariantNumeric = "tabular-nums";
+
+      li.appendChild(left);
+      li.appendChild(right);
+      frag.appendChild(li);
+    });
+
+    cartItems.appendChild(frag);
+    checkoutTotal.textContent = formatMoney(total);
+
+    // Enable optimize if there are items
+    if (btnOptimizeAll) btnOptimizeAll.disabled = false;
+
+    // If already optimized, show savings line
+    if (totalGenericSavings > 0) {
+      savingsBox.textContent = `You saved $${formatMoney(totalGenericSavings)} with generic swaps. (Before: $${formatMoney(
+        subtotal
+      )} → After: $${formatMoney(total)})`;
+    }
+  }
+
+  async function refreshCartUI() {
+    const cid = getCartId();
+    if (!cid) {
+      renderCart(null);
+      return;
+    }
+    try {
+      const data = await api(`/api/cart/${encodeURIComponent(cid)}`);
+      // Enrich prices for all cart items
+      (data.cart.items || []).forEach((it) => ensureEnriched(it.title));
+      renderCart(data.cart);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function addToCart(titles) {
+    const items = normalizeItems(titles);
+    const existing = getCartId();
+    setBusy(true);
+    try {
+      const body = JSON.stringify({ userId: USER_ID, items });
+      const data = existing
+        ? await api(`/api/cart/${encodeURIComponent(existing)}/items`, { method: "POST", body })
+        : await api(`/api/cart/upsert`, { method: "POST", body });
+
+      const cid = data?.cart?.id;
+      if (cid) setCartId(cid);
+
+      // Enrich new items
+      (data.cart.items || []).forEach((it) => ensureEnriched(it.title));
+      renderCart(data.cart);
+    } catch (e) {
+      alert(`Add to cart failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---------- Dish Generator (real steps from backend) ----------
+  async function onGenerate() {
+    const dish = elDish.value.trim();
+    const diet = elDiet.value.trim();
+    if (!dish) return alert("Type a dish first.");
+
+    setBusy(true);
+    try {
+      const data = await api(`/api/ingest/llm`, {
+        method: "POST",
+        body: JSON.stringify({ userId: USER_ID, dish, diet }),
       });
 
-      const { parsed, raw } = await chatJSON(system, userMsg);
-      recipeOut = {
-        title: String(parsed?.title || trimmedDish).trim() || trimmedDish,
-        ingredients: Array.isArray(parsed?.ingredients) ? parsed.ingredients.map(String) : [],
-        steps: Array.isArray(parsed?.steps) ? parsed.steps.map(String) : [],
-        durationSec: Number.isFinite(parsed?.durationSec) ? Math.max(0, Math.round(parsed.durationSec)) : undefined,
-        tags: Array.isArray(parsed?.tags) ? parsed.tags.slice(0, 12) : undefined,
-        model: raw?.model,
-      };
+      const recipe = data?.recipe || {};
+      const ingredients = recipe.ingredients || [];
+      const steps = recipe.steps?.length ? recipe.steps : ["(No steps returned)"];
 
-      // Build items for cart/back-compat
-      const items = mirrorRecipeToItems(recipeOut, sourceUrl);
-      const normalized = normalizeItems(items);
+      dishTitle.textContent = recipe.title || dish;
+      dishMeta.textContent = diet ? `Diet: ${diet}` : "";
+      renderSimpleList(dishIngredients, ingredients);
+      renderSimpleList(dishSteps, steps);
 
-      let attachedCart = null;
-      if (cartId && normalized.length) {
-        attachedCart = await appendItemsToCart({
-          cartId: String(cartId),
-          userId: String(userId),
-          items: normalized,
+      btnAddIngredients.disabled = !ingredients.length;
+      btnAddIngredients.onclick = () => addToCart(ingredients);
+    } catch (e) {
+      alert(`Generate failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---------- Import from URL (true LLM steps via backend) ----------
+  async function onImportUrl() {
+    const url = elUrl.value.trim();
+    if (!url) return alert("Paste a URL first.");
+    setBusy(true);
+    try {
+      const data = await api(`/api/ingest/llm`, {
+        method: "POST",
+        body: JSON.stringify({ userId: USER_ID, sourceUrl: url }),
+      });
+
+      const recipe = data?.recipe || {};
+      const ingredients = recipe.ingredients || [];
+      const steps = recipe.steps?.length
+        ? recipe.steps
+        : ["Open the source link for details.", "Prepare and cook as directed."];
+
+      urlTitle.textContent = recipe.title || "Imported Recipe";
+      urlMeta.textContent = url;
+      renderSimpleList(urlIngredients, ingredients);
+      renderSimpleList(urlSteps, steps);
+
+      btnAddIngredientsUrl.disabled = !ingredients.length;
+      btnAddIngredientsUrl.onclick = () => addToCart(ingredients);
+    } catch (e) {
+      alert(`Import failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---------- Ingredient Suggestions (with Add All) ----------
+  async function onSuggest() {
+    const q = elQ.value.trim();
+    if (!q) return alert("Type a query (e.g. 'pasta').");
+    setBusy(true);
+    try {
+      const data = await api(`/api/ingest/ingredients/suggest?q=${encodeURIComponent(q)}`);
+      const list = (data?.ingredients || []).map((s) => String(s).trim()).filter(Boolean);
+
+      suggestions.innerHTML = "";
+      if (!list.length) {
+        suggestions.innerHTML = "<li>No suggestions.</li>";
+        return;
+      }
+
+      list.forEach((name) => {
+        const li = document.createElement("li");
+        li.textContent = name;
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        btn.style.marginLeft = "8px";
+        btn.textContent = "+ Add";
+        btn.onclick = () => addToCart([name]);
+        li.appendChild(btn);
+        suggestions.appendChild(li);
+      });
+
+      const allBtn = document.createElement("button");
+      allBtn.className = "btn";
+      allBtn.textContent = "Add All";
+      allBtn.style.marginTop = "8px";
+      allBtn.onclick = () => addToCart(list);
+      suggestions.appendChild(allBtn);
+    } catch (e) {
+      alert(`Suggest failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Renders a simple UL/OL of strings
+  function renderSimpleList(el, arr) {
+    el.innerHTML = "";
+    if (!arr?.length) return;
+    const frag = document.createDocumentFragment();
+    arr.forEach((t) => {
+      const li = document.createElement("li");
+      li.textContent = t;
+      frag.appendChild(li);
+    });
+    el.appendChild(frag);
+  }
+
+  // ---------- Optimize (apply generic discount to all items) ----------
+  async function onOptimizeAll() {
+    const cid = getCartId();
+    if (!cid) return alert("No cart yet.");
+    setBusy(true);
+    try {
+      const data = await api(`/api/cart/${encodeURIComponent(cid)}`);
+      const items = data?.cart?.items || [];
+      if (!items.length) {
+        renderCart(data.cart);
+        return;
+      }
+
+      // Apply generic discount to every eligible item
+      let changed = false;
+      items.forEach((it) => {
+        const t = it.title || "";
+        const info = ensureEnriched(t);
+        if (!info.genericApplied) {
+          // Treat everything as swappable to "generic" for demo purposes
+          info.price = +(info.basePrice * (1 - GENERIC_DISCOUNT)).toFixed(2);
+          info.genericApplied = true;
+          info.optimized = true;
+          changed = true;
+        }
+      });
+
+      // Re-render with savings line
+      renderCart({ items });
+      if (!changed) {
+        // If already optimized, still show a note
+        if (savingsBox && !savingsBox.textContent) {
+          savingsBox.textContent = "Items already optimized to generic pricing.";
+        }
+      }
+    } catch (e) {
+      alert(`Optimize failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---------- Email / Print ----------
+  const btnPrint = document.getElementById("btn-print");
+  if (btnPrint) btnPrint.onclick = () => window.print();
+
+  const btnEmail = document.getElementById("btn-email");
+  if (btnEmail)
+    btnEmail.onclick = async () => {
+      const cid = getCartId();
+      if (!cid) return alert("No cart yet.");
+      const to = prompt("Send cart to which email?");
+      if (!to) return;
+      setBusy(true);
+      try {
+        await api(`/api/cart/${encodeURIComponent(cid)}/email-summary`, {
+          method: "POST",
+          body: JSON.stringify({ to, subject: "Your FoodBridge Cart" }),
         });
+        alert("Email sent.");
+      } catch (e) {
+        alert(`Email failed: ${e.message}`);
+      } finally {
+        setBusy(false);
       }
-
-      log("llm_recipe_ok", { reqId, dish: trimmedDish, diet, withContext: contextLines.length });
-      return res.json({
-        ok: true,
-        reqId,
-        mode: "dish",
-        recipe: recipeOut,
-        items,          // keep items for any older UI code that expects it
-        cart: attachedCart,
-      });
-    }
-
-    // ================
-    // B) Text/URL Mode
-    // ================
-    let workingText = String(text || "");
-    let titleHint = null;
-
-    if (sourceUrl) {
-      try {
-        const html = await safeFetch(String(sourceUrl));
-
-        // --- Instagram caption fallback ---
-        if (/instagram\.com/i.test(sourceUrl)) {
-          // Try modern JSON key first
-          let caption = null;
-          // Old edge_media_to_caption format
-          const legacy = html.match(/"edge_media_to_caption":\s*\{"edges":\s*\[\{"node":\{"text":"([^"]+)/);
-          if (legacy && legacy[1]) {
-            caption = legacy[1];
-          } else {
-            // Some deployments have a "caption":"...","shortcode_media" block
-            const newer = html.match(/"shortcode_media":\{[\s\S]*?"accessibility_caption":"[^"]*",[\s\S]*?"edge_media_to_caption":\{"edges":\[\{"node":\{"text":"([^"]+)/);
-            if (newer && newer[1]) caption = newer[1];
-          }
-          if (caption) {
-            const clean = caption.replace(/\\n/g, "\n");
-            workingText = `Instagram caption detected:\n${clean}\n\nTASK: Extract real recipe title, ingredients[], and steps[].`;
-          } else {
-            // Fallback minimal instruction
-            workingText = `Instagram link: ${sourceUrl}\nCaption hidden; infer plausible title, ingredients, and steps for the visible dish.`;
-          }
-        } else {
-          // Generic HTML
-          const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-          titleHint = titleMatch ? stripTags(titleMatch[1]) : null;
-          const extracted = extractTextCandidates(html);
-          workingText = [
-            `SOURCE URL: ${sourceUrl}`,
-            titleHint ? `PAGE TITLE: ${titleHint}` : "",
-            "",
-            `EXTRACTED TEXT:`,
-            extracted || "(none)",
-            "",
-            `TASK: Return the recipe title, ingredients[], and steps[].`,
-          ].join("\n");
-        }
-      } catch {
-        if (!workingText) {
-          workingText = `Infer a plausible recipe (title, ingredients[], steps[]) for: ${sourceUrl}`;
-        }
-      }
-    } else if (!workingText) {
-      workingText = "No source provided. Infer nothing.";
-    }
-
-    const system = buildRecipeSystemPrompt();
-    const userMsg = JSON.stringify({
-      intent: "normalize_recipe_from_source",
-      sourceUrl,
-      text: String(workingText || "").slice(0, 120_000),
-      hintTitle: titleHint || null,
-    });
-
-    const { parsed, raw } = await chatJSON(system, userMsg);
-
-    recipeOut = {
-      title: String(parsed?.title || titleHint || "Imported Recipe").trim(),
-      ingredients: Array.isArray(parsed?.ingredients) ? parsed.ingredients.map(String) : [],
-      steps: Array.isArray(parsed?.steps) ? parsed.steps.map(String) : [],
-      durationSec: Number.isFinite(parsed?.durationSec) ? Math.max(0, Math.round(parsed.durationSec)) : undefined,
-      tags: Array.isArray(parsed?.tags) ? parsed.tags.slice(0, 12) : undefined,
-      model: raw?.model,
     };
 
-    // Also mirror to items[] for back-compat with any UI that expects it
-    const items = mirrorRecipeToItems(recipeOut, sourceUrl);
-    const normalized = normalizeItems(items);
+  // ---------- Events ----------
+  btnDish?.addEventListener("click", onGenerate);
+  btnIngestUrl?.addEventListener("click", onImportUrl);
+  btnSuggest?.addEventListener("click", onSuggest);
+  btnOptimizeAll?.addEventListener("click", onOptimizeAll);
 
-    let attachedCart = null;
-    if (cartId && normalized.length) {
-      attachedCart = await appendItemsToCart({
-        cartId: String(cartId),
-        userId: String(userId),
-        items: normalized,
-      });
-    }
-
-    log("llm_extract_ok", { reqId, totalItems: normalized.length, hasSteps: Array.isArray(recipeOut.steps) && recipeOut.steps.length > 0 });
-    return res.json({
-      ok: true,
-      reqId,
-      mode: "text",
-      recipe: recipeOut,
-      items,
-      cart: attachedCart,
-    });
-  } catch (err) {
-    log("llm_ingest_error", { reqId, error: String(err?.message || err) });
-    return res.status(500).json({ ok: false, error: "ingest_failed", reqId });
-  }
-});
-
-// ---------------------------
-// Ingredient Suggestions
-// ---------------------------
-router.get("/ingredients/suggest", async (req, res) => {
-  const reqId = req.id;
-  try {
-    const q = String((req.query?.q || "")).trim();
-    const diet = String((req.query?.diet || "")).trim();
-
-    const system = buildSuggestSystemPrompt();
-    const userMsg = JSON.stringify({
-      intent: "ingredient_suggestions",
-      query: q,
-      diet,
-    });
-
-    const { parsed, raw } = await chatJSON(system, userMsg);
-    const ingredients = Array.isArray(parsed?.ingredients)
-      ? parsed.ingredients.map((s) => String(s || "").trim()).filter(Boolean).slice(0, 20)
-      : [];
-
-    res.json({
-      ok: true,
-      reqId,
-      ingredients,
-      model: raw?.model,
-    });
-  } catch (e) {
-    log("ingredients_suggest_error", { reqId, error: String(e?.message || e) });
-    res.status(500).json({ ok: false, error: "suggest_failed", reqId });
-  }
-});
-
-export default router;
+  document.addEventListener("DOMContentLoaded", refreshCartUI);
+})();
