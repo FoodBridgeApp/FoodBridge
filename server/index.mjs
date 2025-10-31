@@ -1,51 +1,56 @@
-﻿// server/index.js (ESM, full file, no-Redis build)
-// Features: health, version, config, logging, email send, templated email,
-//           demo ingest, cart API (memory/redis), cart email summary, export JSON
-//           Optional JWT/HMAC auth via FB_REQUIRE_AUTH="true"
+// server/index.mjs  — Full, clean ESM entry (no Redis by default; optional Redis)
+// Features: health, version, config, logging, email send (+templated),
+//           demo ingest, cart API (memory/redis), cart email summary, export JSON,
+//           multi-source cart merge, optional JWT/HMAC via FB_REQUIRE_AUTH
 
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import nodemailer from "nodemailer";
+
 import { requestLogger, log } from "./logger.js";
 import { renderTemplate } from "./templates.js";
 import { authGate, isAuthRequired } from "./auth.js";
 
-// ---- Choose cart backend at runtime (we default to memory) ----
+// --------- Cart backend selection (defaults to memory) ----------
 const USE_REDIS = String(process.env.CART_BACKEND || "").toLowerCase() === "redis";
 let getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems;
 
 if (USE_REDIS) {
   const m = await import("./cart-redis.js");
-  getCart = m.getCart;
-  upsertCart = m.upsertCart;
-  appendItemsToCart = m.appendItemsToCart;
-  deleteCart = m.deleteCart;
-  normalizeItems = m.normalizeItems;
+  ({ getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems } = m);
   console.log("[cart] Using Redis backend");
 } else {
   const m = await import("./cart.js");
-  getCart = m.getCart;
-  upsertCart = m.upsertCart;
-  appendItemsToCart = m.appendItemsToCart;
-  deleteCart = m.deleteCart;
-  normalizeItems = m.normalizeItems;
+  ({ getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems } = m);
   console.log("[cart] Using in-memory backend");
 }
 
-import ingestLlmRouter from "./routes/ingest-llm.js"; // <— NEW (router for /api/ingest/llm)
+// --------- Routers ----------
+import ingestLlmRouter from "./routes/ingest-llm.mjs"; // POST /api/ingest/llm
 
 const app = express();
 
-/* =========================
-   Config & constants
-   ========================= */
+// ==========================
+// Config & constants
+// ==========================
 const PORT = process.env.PORT || 10000;
 const STARTED_AT = new Date().toISOString();
 
-const COMMIT = process.env.RENDER_GIT_COMMIT || "";
+// Prefer explicit build vars; fall back to platform SHAs; then dev
+const VERSION =
+  process.env.FB_VERSION ||
+  process.env.RENDER_GIT_COMMIT ||
+  process.env.SOURCE_VERSION ||
+  "dev-local";
+
+const COMMIT =
+  process.env.FB_COMMIT ||
+  process.env.RENDER_GIT_COMMIT ||
+  process.env.SOURCE_VERSION ||
+  "";
+
 const SHORT_COMMIT = COMMIT ? COMMIT.slice(0, 7) : null;
-const VERSION = COMMIT || "dev-local";
 
 const ALLOW_ORIGINS = [
   "https://foodbridgeapp.github.io",
@@ -54,13 +59,10 @@ const ALLOW_ORIGINS = [
   // "http://localhost:3000",
 ];
 
-/* =========================
-   Middleware
-   ========================= */
+// ==========================
+// Middleware
+// ==========================
 app.use(
-import ingestLlmRouter from './routes/ingest-llm.js';
-app.use('/api', ingestLlmRouter);
-
   cors({
     credentials: true,
     origin: (origin, cb) => {
@@ -70,11 +72,8 @@ app.use('/api', ingestLlmRouter);
   })
 );
 
-// IMPORTANT: capture raw body *without* consuming the stream
+// capture raw body (useful for HMAC/JWT verification)
 app.use(
-import ingestLlmRouter from './routes/ingest-llm.js';
-app.use('/api', ingestLlmRouter);
-
   express.json({
     limit: "512kb",
     verify: (req, _res, buf) => {
@@ -84,16 +83,11 @@ app.use('/api', ingestLlmRouter);
   })
 );
 
-// If you expect form posts too (optional):
+// Optional form posts
 app.use(express.urlencoded({ extended: false }));
-import ingestLlmRouter from './routes/ingest-llm.js';
-app.use('/api', ingestLlmRouter);
 
-
+// Basic security headers
 app.use((req, res, next) => {
-import ingestLlmRouter from './routes/ingest-llm.js';
-app.use('/api', ingestLlmRouter);
-
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.setHeader("Referrer-Policy", "no-referrer");
@@ -102,16 +96,13 @@ app.use('/api', ingestLlmRouter);
 });
 
 app.use(requestLogger());
-import ingestLlmRouter from './routes/ingest-llm.js';
-app.use('/api', ingestLlmRouter);
-
 
 // ===== Mount LLM ingest router (adds POST /api/ingest/llm) =====
 app.use("/api/ingest", ingestLlmRouter);
 
-/* =========================
-   Utils
-   ========================= */
+// ==========================
+// Email helpers
+// ==========================
 const emailLimiter = (() => {
   const bucket = new Map();
   const WINDOW_MS = 60_000;
@@ -136,7 +127,6 @@ const emailLimiter = (() => {
 let _transporter = null;
 async function getTransporter() {
   if (_transporter) return _transporter;
-
   const host = process.env.SMTP_HOST;
   const port = Number(process.env.SMTP_PORT || 587);
   const user = process.env.SMTP_USER;
@@ -155,9 +145,9 @@ function isValidEmail(e) {
   return typeof e === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 }
 
-/* =========================
-   Root + Platform
-   ========================= */
+// ==========================
+// Root + Platform
+// ==========================
 app.head("/", (req, res) => res.status(204).end());
 app.get("/", (req, res) => {
   res.json({
@@ -252,9 +242,9 @@ app.get("/api/status", (req, res) => {
   });
 });
 
-/* =========================
-   Email
-   ========================= */
+// ==========================
+/** Email */
+// ==========================
 app.get("/api/email/health", async (req, res) => {
   const emailConfigured =
     !!process.env.SMTP_HOST && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
@@ -280,12 +270,10 @@ app.get("/api/email/health", async (req, res) => {
 
 app.post("/api/email/send", authGate(isAuthRequired()), async (req, res) => {
   try {
-    const ip = req.ip || "unknown";
-    const gate = emailLimiter(ip);
+    const gate = emailLimiter(req.ip || "unknown");
     if (!gate.allowed) {
       return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt, reqId: req.id });
     }
-
     const { to, subject, text, html, from } = req.body || {};
     if (!isValidEmail(to)) return res.status(400).json({ ok: false, error: "invalid_to", reqId: req.id });
     if (!subject || typeof subject !== "string")
@@ -293,10 +281,8 @@ app.post("/api/email/send", authGate(isAuthRequired()), async (req, res) => {
     if (!text && !html) return res.status(400).json({ ok: false, error: "missing_body", reqId: req.id });
 
     const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
-
     const t = await getTransporter();
     const info = await t.sendMail({ from: sender, to, subject, text: text || undefined, html: html || undefined });
-
     res.json({
       ok: true,
       messageId: info.messageId || null,
@@ -313,24 +299,19 @@ app.post("/api/email/send", authGate(isAuthRequired()), async (req, res) => {
 
 app.post("/api/email/template", authGate(isAuthRequired()), async (req, res) => {
   try {
-    const ip = req.ip || "unknown";
-    const gate = emailLimiter(ip);
+    const gate = emailLimiter(req.ip || "unknown");
     if (!gate.allowed) {
       return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt, reqId: req.id });
     }
-
     const { to, subject, template = "basic", vars = {}, from } = req.body || {};
     if (!isValidEmail(to)) return res.status(400).json({ ok: false, error: "invalid_to", reqId: req.id });
-
     if (!subject || typeof subject !== "string")
       return res.status(400).json({ ok: false, error: "invalid_subject", reqId: req.id });
 
     const html = renderTemplate(template, vars);
     const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
-
     const t = await getTransporter();
     const info = await t.sendMail({ from: sender, to, subject, html });
-
     res.json({
       ok: true,
       messageId: info.messageId || null,
@@ -345,9 +326,9 @@ app.post("/api/email/template", authGate(isAuthRequired()), async (req, res) => 
   }
 });
 
-/* =========================
-   Demo Ingest
-   ========================= */
+// ==========================
+// Demo Ingest
+// ==========================
 app.post("/api/ingest/demo", (req, res) => {
   const reqId = req.id;
   const body = req.body || {};
@@ -403,13 +384,12 @@ app.post("/api/ingest/demo", (req, res) => {
   });
 });
 
-/* =========================
-   Cart API
-   ========================= */
+// ==========================
+// Cart API
+// ==========================
 app.post("/api/cart/upsert", async (req, res) => {
   const { cartId, userId, items } = req.body || {};
   if (!userId) return res.status(400).json({ ok: false, error: "missing_userId", reqId: req.id });
-
   const normalized = Array.isArray(items) ? normalizeItems(items) : [];
   const cart = await upsertCart({ cartId, userId: String(userId), items: normalized });
   res.json({ ok: true, cart, reqId: req.id });
@@ -439,10 +419,10 @@ app.delete("/api/cart/:cartId", async (req, res) => {
   res.json({ ok, reqId: req.id });
 });
 
+// ---- Email summary for a specific cartId (existing feature) ----
 app.post("/api/cart/:cartId/email-summary", authGate(isAuthRequired()), async (req, res) => {
   try {
-    const ip = req.ip || "unknown";
-    const gate = emailLimiter(ip);
+    const gate = emailLimiter(req.ip || "unknown");
     if (!gate.allowed) {
       return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt, reqId: req.id });
     }
@@ -456,11 +436,11 @@ app.post("/api/cart/:cartId/email-summary", authGate(isAuthRequired()), async (r
 
     const html = renderTemplate("cartSummary", {
       title: "Your FoodBridge Cart",
-      intro: "Hereâ€™s a summary of your current cart.",
+      intro: "Here’s a summary of your current cart.",
       cart,
       ctaText: "Open FoodBridge",
       ctaUrl: "https://foodbridgeapp.github.io/FoodBridge",
-      footer: "If this wasnâ€™t you, just ignore this email.",
+      footer: "If this wasn’t you, just ignore this email.",
     });
 
     const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
@@ -486,6 +466,7 @@ app.post("/api/cart/:cartId/email-summary", authGate(isAuthRequired()), async (r
   }
 });
 
+// ---- Export by cartId (existing) ----
 app.get("/api/cart/:cartId/export.json", async (req, res) => {
   const { cartId } = req.params;
   const cart = await getCart(String(cartId));
@@ -496,20 +477,132 @@ app.get("/api/cart/:cartId/export.json", async (req, res) => {
   res.send(JSON.stringify({ ok: true, cart, exportedAt: new Date().toISOString() }));
 });
 
-/* =========================
-   Error handler (last)
-   ========================= */
-app.use((err, req, res, _next) => {
-import ingestLlmRouter from './routes/ingest-llm.js';
-app.use('/api', ingestLlmRouter);
+// ==========================
+// NEW: Multi-source Cart Merge + Export/Email by User
+// ==========================
+function mergeItems(arraysOfItems) {
+  const map = new Map(); // key = normalized name + unit
+  const norm = (s) => (s || "").trim().toLowerCase();
 
+  for (const items of arraysOfItems) {
+    for (const raw of (items || [])) {
+      const name = norm(raw.name || raw.title || raw.ingredient || "unknown");
+      if (!name) continue;
+      const unit = raw.unit || "";
+      const key = `${name}|${unit}`;
+
+      if (map.has(key)) {
+        const prev = map.get(key);
+        const a = Number(prev.qty);
+        const b = Number(raw.qty);
+        if (!Number.isNaN(a) && !Number.isNaN(b)) prev.qty = a + b;
+        prev.notes = prev.notes || raw.notes || null;
+        prev.sourceUrl = prev.sourceUrl || raw.sourceUrl || null;
+      } else {
+        map.set(key, {
+          id: raw.id || null,
+          type: raw.type || "ingredient",
+          title: raw.title || raw.name || "Untitled",
+          name: raw.name || raw.title || "unknown",
+          qty: raw.qty ?? 1,
+          unit,
+          notes: raw.notes ?? null,
+          sourceUrl: raw.sourceUrl ?? null,
+          addedAt: new Date().toISOString(),
+        });
+      }
+    }
+  }
+  return Array.from(map.values());
+}
+
+// Merge multiple sources and upsert a single cart for userId
+app.post("/api/cart/merge", async (req, res) => {
+  try {
+    const { userId, cartId = null, sources } = req.body || {};
+    if (!userId || !Array.isArray(sources)) {
+      return res.status(400).json({ ok: false, error: "bad_request", reqId: req.id });
+    }
+    // Normalize each source items first, then merge
+    const normalizedSources = sources.map((s) => normalizeItems(Array.isArray(s?.items) ? s.items : []));
+    const merged = mergeItems(normalizedSources);
+    const cart = await upsertCart({ cartId, userId: String(userId), items: merged });
+    res.json({ ok: true, cart, reqId: req.id });
+  } catch (e) {
+    log("cart_merge_error", { error: String(e?.message || e), reqId: req.id });
+    res.status(500).json({ ok: false, error: "merge_failed", reqId: req.id });
+  }
+});
+
+// Export by userId (convenience)
+app.get("/api/cart/export.json", async (req, res) => {
+  const userId = req.query.userId;
+  if (!userId) return res.status(400).json({ ok: false, error: "missing_user", reqId: req.id });
+  const cart = await getCart(String(userId)); // your store supports cartId or userId keys; adjust if needed
+  if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
+
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(JSON.stringify({ ok: true, cart, exportedAt: new Date().toISOString() }));
+});
+
+// Email by userId (convenience)
+app.post("/api/cart/email", authGate(isAuthRequired()), async (req, res) => {
+  try {
+    const gate = emailLimiter(req.ip || "unknown");
+    if (!gate.allowed) {
+      return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt, reqId: req.id });
+    }
+    const { userId, to, subject, from } = req.body || {};
+    if (!userId || !isValidEmail(to)) {
+      return res.status(400).json({ ok: false, error: "bad_request", reqId: req.id });
+    }
+
+    const cart = await getCart(String(userId));
+    if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
+
+    const lines = (cart.items || []).map((i) => `• ${i.name}${i.qty ? " " + i.qty : ""}${i.unit ? " " + i.unit : ""}`);
+    const html = `
+      <h2>FoodBridge Cart</h2>
+      <p>User: ${cart.userId || userId}</p>
+      <ul>${lines.map((l) => `<li>${l}</li>`).join("")}</ul>
+    `;
+
+    const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
+    const t = await getTransporter();
+    const info = await t.sendMail({
+      from: sender,
+      to,
+      subject: subject || "Your FoodBridge Cart",
+      html,
+      text: lines.join("\n"),
+    });
+
+    res.json({
+      ok: true,
+      messageId: info.messageId || null,
+      accepted: info.accepted || [],
+      rejected: info.rejected || [],
+      response: info.response || null,
+      reqId: req.id,
+    });
+  } catch (e) {
+    log("cart_email_error", { error: String(e?.message || e), reqId: req.id });
+    res.status(500).json({ ok: false, error: "email_failed", reqId: req.id });
+  }
+});
+
+// ==========================
+// Error handler (last)
+// ==========================
+app.use((err, req, res, _next) => {
   log("uncaught_error", { reqId: req?.id, error: String(err?.stack || err) });
   res.status(500).json({ ok: false, error: "internal_error", reqId: req?.id });
 });
 
-/* =========================
-   Start
-   ========================= */
+// ==========================
+// Start
+// ==========================
 app.listen(PORT, () => {
   log("listening", {
     port: String(PORT),
@@ -518,4 +611,3 @@ app.listen(PORT, () => {
     shortCommit: SHORT_COMMIT,
   });
 });
-
