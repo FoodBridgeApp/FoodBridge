@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>FoodBridge — LLM Ingest</title>
+  <meta name="viewport" content="width=device-width" />
+  <style>
+    :root { --bd:#e5e7eb; --fg:#111; --muted:#6b7280; --bg:#fff; --chip:#f3f4f6; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background:#fafafa; margin:24px; }
+    .wrap { max-width: 900px; margin:0 auto; }
+    .card { background:var(--bg); border:1px solid var(--bd); border-radius:12px; padding:16px; margin:12px 0; }
+    textarea { width:100%; min-height: 220px; padding:12px; border:1px solid var(--bd); border-radius:10px; }
+    input, select { width:100%; padding:10px; border:1px solid var(--bd); border-radius:10px; }
+    .row { display:grid; gap:10px; grid-template-columns: 1fr 1fr; }
+    .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+    .btn { padding:10px 14px; border:1px solid var(--bd); background:#fff; border-radius:10px; cursor:pointer; }
+    .btn:hover { background:#f9fafb; }
+    .muted { color:var(--muted); font-size:12px; }
+    pre { background:#f6f8fa; padding:10px; border-radius:10px; max-height:320px; overflow:auto; }
+    .chip { display:inline-block; background:var(--chip); padding:4px 8px; border-radius:999px; font-size:12px; }
+  </style>
+  <script>
+    // Your live server:
+    window.__FB_API_BASE__ = "https://foodbridge-server-rv0a.onrender.com";
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>LLM Ingest → Cart</h1>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Cart ID (optional; blank = just preview)</label>
+          <input data-field="cartId" placeholder="fb_xxx (we will use localStorage if blank)" />
+        </div>
+        <div>
+          <label>Source URL (optional)</label>
+          <input data-field="src" placeholder="https://example.com/recipe" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <label>Paste recipe text (from your PDFs/LLM)</label>
+        <textarea data-field="txt" placeholder="Ingredients: ...&#10;Directions: ..."></textarea>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn" data-btn="ingest">Ingest (Preview)</button>
+        <button class="btn" data-btn="ingestToCart">Ingest + Append to Cart</button>
+        <span class="chip">Cart ID: <span data-out="cartId">(none)</span></span>
+        <span class="muted" data-out="status"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Response</h3>
+      <pre data-out="raw">(results appear here)</pre>
+    </div>
+
+    <div class="card">
+      <div class="muted">
+        Tip: the UI will auto-use <code>localStorage["fb.cartId"]</code> if you leave Cart ID blank.
+        Open your cart in <a href="./library.html" target="_blank" rel="noopener">Recipe Library</a>.
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/ingest.js"></script>
+</body>
+</html>
