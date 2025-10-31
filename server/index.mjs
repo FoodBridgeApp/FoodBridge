@@ -1,7 +1,8 @@
 // server/index.mjs  — Full, clean ESM entry (no Redis by default; optional Redis)
 // Features: health, version, config, logging, email send (+templated),
 //           demo ingest, cart API (memory/redis), cart email summary, export JSON,
-//           multi-source cart merge, optional JWT/HMAC via FB_REQUIRE_AUTH
+//           multi-source cart merge, export/email by userId convenience,
+//           optional JWT/HMAC via FB_REQUIRE_AUTH
 
 import "dotenv/config";
 import express from "express";
@@ -148,7 +149,7 @@ function isValidEmail(e) {
 // ==========================
 // Root + Platform
 // ==========================
-app.head("/", (req, res) => res.status(204).end());
+app.head("/", (_req, res) => res.status(204).end());
 app.get("/", (req, res) => {
   res.json({
     ok: true,
@@ -243,93 +244,9 @@ app.get("/api/status", (req, res) => {
 });
 
 // ==========================
-/** Email */
-// ==========================
-app.get("/api/email/health", async (req, res) => {
-  const emailConfigured =
-    !!process.env.SMTP_HOST && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
-
-  let verified = false;
-  if (emailConfigured) {
-    try {
-      const t = await getTransporter();
-      await t.verify();
-      verified = true;
-    } catch {
-      verified = false;
-    }
-  }
-  res.json({
-    ok: emailConfigured && verified,
-    configured: emailConfigured,
-    verified,
-    ts: Date.now(),
-    reqId: req.id,
-  });
-});
-
-app.post("/api/email/send", authGate(isAuthRequired()), async (req, res) => {
-  try {
-    const gate = emailLimiter(req.ip || "unknown");
-    if (!gate.allowed) {
-      return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt, reqId: req.id });
-    }
-    const { to, subject, text, html, from } = req.body || {};
-    if (!isValidEmail(to)) return res.status(400).json({ ok: false, error: "invalid_to", reqId: req.id });
-    if (!subject || typeof subject !== "string")
-      return res.status(400).json({ ok: false, error: "invalid_subject", reqId: req.id });
-    if (!text && !html) return res.status(400).json({ ok: false, error: "missing_body", reqId: req.id });
-
-    const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
-    const t = await getTransporter();
-    const info = await t.sendMail({ from: sender, to, subject, text: text || undefined, html: html || undefined });
-    res.json({
-      ok: true,
-      messageId: info.messageId || null,
-      accepted: info.accepted || [],
-      rejected: info.rejected || [],
-      response: info.response || null,
-      reqId: req.id,
-    });
-  } catch (err) {
-    log("email_send_error", { error: String(err?.message || err), reqId: req.id });
-    res.status(500).json({ ok: false, error: "send_failed", reqId: req.id });
-  }
-});
-
-app.post("/api/email/template", authGate(isAuthRequired()), async (req, res) => {
-  try {
-    const gate = emailLimiter(req.ip || "unknown");
-    if (!gate.allowed) {
-      return res.status(429).json({ ok: false, error: "rate_limited", retryAt: gate.resetAt, reqId: req.id });
-    }
-    const { to, subject, template = "basic", vars = {}, from } = req.body || {};
-    if (!isValidEmail(to)) return res.status(400).json({ ok: false, error: "invalid_to", reqId: req.id });
-    if (!subject || typeof subject !== "string")
-      return res.status(400).json({ ok: false, error: "invalid_subject", reqId: req.id });
-
-    const html = renderTemplate(template, vars);
-    const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
-    const t = await getTransporter();
-    const info = await t.sendMail({ from: sender, to, subject, html });
-    res.json({
-      ok: true,
-      messageId: info.messageId || null,
-      accepted: info.accepted || [],
-      rejected: info.rejected || [],
-      response: info.response || null,
-      reqId: req.id,
-    });
-  } catch (err) {
-    log("email_template_error", { error: String(err?.message || err), reqId: req.id });
-    res.status(500).json({ ok: false, error: "send_failed", reqId: req.id });
-  }
-});
-
-// ==========================
 // Demo Ingest
 // ==========================
-app.post("/api/ingest/demo", (req, res) => {
+app.post("/api/ingest/demo", async (req, res) => {
   const reqId = req.id;
   const body = req.body || {};
   const items = Array.isArray(body.items) ? body.items : [];
@@ -338,7 +255,7 @@ app.post("/api/ingest/demo", (req, res) => {
   const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
 
   const normalized = normalizeItems(items);
-  const counters = normalized.reduce(
+  const counts = normalized.reduce(
     (acc, n) => {
       acc.total += 1;
       acc.byType[n.type] = (acc.byType[n.type] || 0) + 1;
@@ -348,50 +265,34 @@ app.post("/api/ingest/demo", (req, res) => {
   );
 
   if (cartId) {
-    appendItemsToCart({ cartId, userId, items: normalized })
-      .then((cart) => {
-        log("demo_ingest_ok", { reqId, userId, totalItems: counters.total, cartId });
-        res.json({
-          ok: true,
-          reqId,
-          userId,
-          cartId,
-          tags,
-          counts: counters,
-          items: normalized,
-          cart,
-          receivedAt: Date.now(),
-        });
-      })
-      .catch((err) => {
-        log("demo_ingest_err", { reqId, error: String(err?.message || err) });
-        res.status(500).json({ ok: false, error: "cart_append_failed", reqId });
+    try {
+      const cart = await appendItemsToCart({ cartId, userId, items: normalized });
+      log("demo_ingest_ok", { reqId, userId, totalItems: counts.total, cartId });
+      return res.json({
+        ok: true, reqId, userId, cartId, tags, counts, items: normalized, cart, receivedAt: Date.now(),
       });
-    return;
+    } catch (err) {
+      log("demo_ingest_err", { reqId, error: String(err?.message || err) });
+      return res.status(500).json({ ok: false, error: "cart_append_failed", reqId });
+    }
   }
 
-  log("demo_ingest_ok", { reqId, userId, totalItems: counters.total, cartId: null });
+  log("demo_ingest_ok", { reqId, userId, totalItems: counts.total, cartId: null });
   res.json({
-    ok: true,
-    reqId,
-    userId,
-    cartId: null,
-    tags,
-    counts: counters,
-    items: normalized,
-    cart: null,
-    receivedAt: Date.now(),
+    ok: true, reqId, userId, cartId: null, tags, counts, items: normalized, cart: null, receivedAt: Date.now(),
   });
 });
 
 // ==========================
-// Cart API
+// Cart API (base)
 // ==========================
 app.post("/api/cart/upsert", async (req, res) => {
   const { cartId, userId, items } = req.body || {};
   if (!userId) return res.status(400).json({ ok: false, error: "missing_userId", reqId: req.id });
   const normalized = Array.isArray(items) ? normalizeItems(items) : [];
   const cart = await upsertCart({ cartId, userId: String(userId), items: normalized });
+  // track latest cart per user for user endpoints
+  trackUserLatestCart(String(userId), cart.cartId || cartId);
   res.json({ ok: true, cart, reqId: req.id });
 });
 
@@ -403,6 +304,7 @@ app.post("/api/cart/:cartId/items", async (req, res) => {
 
   const normalized = Array.isArray(items) ? normalizeItems(items) : [];
   const cart = await appendItemsToCart({ cartId: String(cartId), userId: String(userId), items: normalized });
+  trackUserLatestCart(String(userId), String(cartId));
   res.json({ ok: true, cart, reqId: req.id });
 });
 
@@ -478,7 +380,7 @@ app.get("/api/cart/:cartId/export.json", async (req, res) => {
 });
 
 // ==========================
-// NEW: Multi-source Cart Merge + Export/Email by User
+// NEW: Multi-source Cart Merge
 // ==========================
 function mergeItems(arraysOfItems) {
   const map = new Map(); // key = normalized name + unit
@@ -486,9 +388,9 @@ function mergeItems(arraysOfItems) {
 
   for (const items of arraysOfItems) {
     for (const raw of (items || [])) {
-      const name = norm(raw.name || raw.title || raw.ingredient || "unknown");
+      const name = norm(raw.name || raw.title || raw.ingredient || "");
       if (!name) continue;
-      const unit = raw.unit || "";
+      const unit = (raw.unit || "").trim();
       const key = `${name}|${unit}`;
 
       if (map.has(key)) {
@@ -502,8 +404,8 @@ function mergeItems(arraysOfItems) {
         map.set(key, {
           id: raw.id || null,
           type: raw.type || "ingredient",
-          title: raw.title || raw.name || "Untitled",
-          name: raw.name || raw.title || "unknown",
+          title: raw.title || raw.name || name,
+          name: raw.name || raw.title || name,
           qty: raw.qty ?? 1,
           unit,
           notes: raw.notes ?? null,
@@ -527,6 +429,7 @@ app.post("/api/cart/merge", async (req, res) => {
     const normalizedSources = sources.map((s) => normalizeItems(Array.isArray(s?.items) ? s.items : []));
     const merged = mergeItems(normalizedSources);
     const cart = await upsertCart({ cartId, userId: String(userId), items: merged });
+    trackUserLatestCart(String(userId), cart.cartId || cartId);
     res.json({ ok: true, cart, reqId: req.id });
   } catch (e) {
     log("cart_merge_error", { error: String(e?.message || e), reqId: req.id });
@@ -534,11 +437,37 @@ app.post("/api/cart/merge", async (req, res) => {
   }
 });
 
-// Export by userId (convenience)
+// ==========================
+// NEW: Export/Email by userId convenience
+// ==========================
+
+/**
+ * We track the latest cartId per user in-process so that
+ * /api/cart/export.json?userId=... and /api/cart/email can work
+ * even if the underlying store is keyed by cartId.
+ */
+const userLatestCartId = new Map();
+function trackUserLatestCart(userId, cartId) {
+  if (userId && cartId) userLatestCartId.set(userId, String(cartId));
+}
+async function getCartByUser(userId) {
+  // try direct key first
+  let cart = await getCart(String(userId));
+  if (cart) return cart;
+  // then try our latest map
+  const latest = userLatestCartId.get(String(userId));
+  if (latest) {
+    cart = await getCart(latest);
+    if (cart) return cart;
+  }
+  return null;
+}
+
 app.get("/api/cart/export.json", async (req, res) => {
   const userId = req.query.userId;
   if (!userId) return res.status(400).json({ ok: false, error: "missing_user", reqId: req.id });
-  const cart = await getCart(String(userId)); // your store supports cartId or userId keys; adjust if needed
+
+  const cart = await getCartByUser(String(userId));
   if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
 
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -546,7 +475,6 @@ app.get("/api/cart/export.json", async (req, res) => {
   res.send(JSON.stringify({ ok: true, cart, exportedAt: new Date().toISOString() }));
 });
 
-// Email by userId (convenience)
 app.post("/api/cart/email", authGate(isAuthRequired()), async (req, res) => {
   try {
     const gate = emailLimiter(req.ip || "unknown");
@@ -558,7 +486,7 @@ app.post("/api/cart/email", authGate(isAuthRequired()), async (req, res) => {
       return res.status(400).json({ ok: false, error: "bad_request", reqId: req.id });
     }
 
-    const cart = await getCart(String(userId));
+    const cart = await getCartByUser(String(userId));
     if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
 
     const lines = (cart.items || []).map((i) => `• ${i.name}${i.qty ? " " + i.qty : ""}${i.unit ? " " + i.unit : ""}`);
