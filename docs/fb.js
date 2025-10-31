@@ -2,7 +2,7 @@
 // Talks to server at window.__FB_API_BASE__ (from config.js)
 
 (function () {
-  const BUILD = "fb-2025-10-31b"; // <- shows in console to confirm new JS is live
+  const BUILD = "fb-2025-10-31c";
   console.log("[%cFoodBridge%c] %s", "color:#4da3ff", "color:inherit", BUILD);
 
   // ---------- Config ----------
@@ -27,7 +27,7 @@
     frozen: 4.5,
     other: 3.0,
   };
-  const GENERIC_DISCOUNT = 0.15; // 15% cheaper generics
+  const GENERIC_DISCOUNT = 0.15;
   const BRAND_HINTS = ["kraft", "barilla", "rao", "heinz", "oreo", "kerrygold", "tillamook", "pepsi", "coke"];
 
   // Show API in header
@@ -41,6 +41,7 @@
   }
 
   // ---------- DOM refs ----------
+  // AI Recipe
   const elDish = document.getElementById("dish");
   const elDiet = document.getElementById("diet");
   const btnDish = document.getElementById("btnDish");
@@ -50,6 +51,7 @@
   const dishSteps = document.getElementById("dishSteps");
   const btnAddIngredients = document.getElementById("btnAddIngredients");
 
+  // URL Import
   const elUrl = document.getElementById("txt-url");
   const btnIngestUrl = document.getElementById("btn-ingest-url");
   const urlTitle = document.getElementById("urlTitle");
@@ -58,17 +60,21 @@
   const urlSteps = document.getElementById("urlSteps");
   const btnAddIngredientsUrl = document.getElementById("btnAddIngredientsUrl");
 
+  // Suggestions
   const elQ = document.getElementById("q");
   const btnSuggest = document.getElementById("btn-suggest");
   const suggestions = document.getElementById("suggestions");
 
+  // Cart
   const cartItems = document.getElementById("cart-items");
   const checkoutTotal = document.getElementById("checkout-total");
   const btnOptimizeAll = document.getElementById("btn-opt-all");
   const savingsBox = document.getElementById("savings");
 
-  // Local enrichment store (title -> {category, basePrice, price, optimized})
-  const priceCache = new Map();
+  // ---------- Section State ----------
+  let stateDishIngredients = [];     // last full list from AI Recipe
+  let stateUrlIngredients = [];      // last full list from URL Import
+  let stateSuggestList = [];         // last full list from Suggestions
 
   // ---------- Helpers ----------
   const normalize = (s) => String(s || "").toLowerCase();
@@ -99,6 +105,8 @@
     return BRAND_HINTS.some((b) => t.includes(b));
   }
 
+  // Local enrichment store (title -> {category, basePrice, price, optimized, genericApplied})
+  const priceCache = new Map();
   function ensureEnriched(itemTitle) {
     const key = itemTitle.trim();
     if (priceCache.has(key)) return priceCache.get(key);
@@ -141,7 +149,7 @@
     return data;
   }
 
-  const getCartId = () => localStorage.getItem(LS_CART_ID);
+  const getCartId = () => localStorage.getItem(LS_CART_ID) || null;
   const setCartId = (id) => id && localStorage.setItem(LS_CART_ID, id);
 
   const normalizeItems = (titles) =>
@@ -215,6 +223,7 @@
   async function addToCart(titles) {
     const items = normalizeItems(titles);
     const existing = getCartId();
+
     setBusy(true);
     try {
       const body = JSON.stringify({ userId: USER_ID, items });
@@ -224,6 +233,7 @@
 
       const cid = data?.cart?.id;
       if (cid) setCartId(cid);
+
       (data.cart.items || []).forEach((it) => ensureEnriched(it.title));
       renderCart(data.cart);
     } catch (e) {
@@ -232,6 +242,97 @@
     } finally {
       setBusy(false);
     }
+  }
+
+  // ---------- Simple list renderers ----------
+  function renderSimpleList(el, arr) {
+    el.innerHTML = "";
+    if (!arr?.length) return;
+    const frag = document.createDocumentFragment();
+    arr.forEach((t) => {
+      const li = document.createElement("li");
+      li.textContent = t;
+      frag.appendChild(li);
+    });
+    el.appendChild(frag);
+  }
+
+  function renderCheckList(el, arr) {
+    // For Suggestions: show checkboxes + Add Selected
+    el.innerHTML = "";
+    if (!arr?.length) {
+      el.innerHTML = "<li>No suggestions.</li>";
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    arr.forEach((name, idx) => {
+      const li = document.createElement("li");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.id = `sg_${idx}`;
+      cb.dataset.title = name;
+      cb.style.marginRight = "6px";
+
+      const label = document.createElement("label");
+      label.htmlFor = cb.id;
+      label.textContent = name;
+
+      const btn = document.createElement("button");
+      btn.className = "btn";
+      btn.style.marginLeft = "8px";
+      btn.textContent = "+ Add";
+      btn.onclick = () => addToCart([name]);
+
+      li.appendChild(cb);
+      li.appendChild(label);
+      li.appendChild(btn);
+      frag.appendChild(li);
+    });
+
+    // Controls row
+    const liCtl = document.createElement("li");
+    liCtl.style.marginTop = "8px";
+    const addAll = document.createElement("button");
+    addAll.className = "btn";
+    addAll.textContent = "Add All";
+    addAll.onclick = () => addToCart(arr);
+
+    const addSelected = document.createElement("button");
+    addSelected.className = "btn";
+    addSelected.textContent = "Add Selected";
+    addSelected.style.marginLeft = "8px";
+    addSelected.onclick = () => {
+      const picks = [];
+      el.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        if (cb.checked && cb.dataset.title) picks.push(cb.dataset.title);
+      });
+      if (!picks.length) return alert("Select at least one item.");
+      addToCart(picks);
+    };
+
+    const selAll = document.createElement("button");
+    selAll.className = "btn";
+    selAll.textContent = "Select All";
+    selAll.style.marginLeft = "8px";
+    selAll.onclick = () => {
+      el.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = true));
+    };
+
+    const clrAll = document.createElement("button");
+    clrAll.className = "btn";
+    clrAll.textContent = "Clear";
+    clrAll.style.marginLeft = "8px";
+    clrAll.onclick = () => {
+      el.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = false));
+    };
+
+    liCtl.appendChild(addAll);
+    liCtl.appendChild(addSelected);
+    liCtl.appendChild(selAll);
+    liCtl.appendChild(clrAll);
+    frag.appendChild(liCtl);
+
+    el.appendChild(frag);
   }
 
   // ---------- Dish Generator (true steps via backend) ----------
@@ -248,16 +349,21 @@
       });
 
       const recipe = data?.recipe || {};
-      const ingredients = recipe.ingredients || [];
-      const steps = recipe.steps?.length ? recipe.steps : ["(No steps returned)"];
+      const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+      const steps = Array.isArray(recipe.steps) && recipe.steps.length ? recipe.steps : [
+        "(No steps returned.)"
+      ];
+
+      // Save section state for "Add ingredients to cart"
+      stateDishIngredients = ingredients.slice();
 
       dishTitle.textContent = recipe.title || dish;
       dishMeta.textContent = diet ? `Diet: ${diet}` : "";
       renderSimpleList(dishIngredients, ingredients);
       renderSimpleList(dishSteps, steps);
 
-      btnAddIngredients.disabled = !ingredients.length;
-      btnAddIngredients.onclick = () => addToCart(ingredients);
+      btnAddIngredients.disabled = !stateDishIngredients.length;
+      btnAddIngredients.onclick = () => addToCart(stateDishIngredients);
     } catch (e) {
       console.error(e);
       alert(`Generate failed: ${e.message}`);
@@ -266,17 +372,17 @@
     }
   }
 
-  // ---------- Import from URL (send explicit text prompt to backend) ----------
+  // ---------- Import from URL (explicit text prompt) ----------
   async function onImportUrl() {
     const url = (elUrl?.value || "").trim();
     if (!url) return alert("Paste a URL first.");
 
-    // IMPORTANT: include 'text' so /api/ingest/llm can use the classic extractor if needed
     const text = [
-      `Extract the exact recipe title, complete ingredient list, and the real step-by-step method from this source:`,
+      `Extract the exact recipe title, complete ingredient list, and REAL step-by-step method from this source:`,
       url,
-      `Return structured, real steps (not generic placeholders).`,
-      `Ingredients should be 8–30 short grocery-style names (no quantities or brands).`,
+      `- Ingredients: 8–30 short grocery-style names (no brands/quantities).`,
+      `- Steps: clear, sequential cooking instructions pulled from the source (no placeholders).`,
+      `Return a structured result.`,
     ].join("\n");
 
     setBusy(true);
@@ -286,15 +392,16 @@
         body: JSON.stringify({ userId: USER_ID, text, sourceUrl: url }),
       });
 
-      // Prefer new-style {recipe:{title,ingredients,steps}}, but also support old-style items
+      // Prefer new-style recipe block
       const recipe = data?.recipe || {};
-      let ingredients = recipe.ingredients || [];
-      let steps = recipe.steps || [];
+      let ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+      let steps = Array.isArray(recipe.steps) ? recipe.steps : [];
 
+      // Back-compat items extraction
       if (!ingredients.length && Array.isArray(data?.items)) {
         ingredients = data.items.filter((x) => x.type === "ingredient").map((x) => x.title);
       }
-      if (!steps?.length) {
+      if (!steps.length) {
         steps = ["Open the source link for full steps.", "Prepare and cook as directed."];
       }
 
@@ -303,13 +410,16 @@
         (Array.isArray(data?.items) ? data.items.find((x) => x.type === "recipe")?.title : null) ||
         "Imported Recipe";
 
+      // Save section state
+      stateUrlIngredients = ingredients.slice();
+
       urlTitle.textContent = title;
       urlMeta.textContent = url;
       renderSimpleList(urlIngredients, ingredients);
       renderSimpleList(urlSteps, steps);
 
-      btnAddIngredientsUrl.disabled = !ingredients.length;
-      btnAddIngredientsUrl.onclick = () => addToCart(ingredients);
+      btnAddIngredientsUrl.disabled = !stateUrlIngredients.length;
+      btnAddIngredientsUrl.onclick = () => addToCart(stateUrlIngredients);
     } catch (e) {
       console.error(e);
       alert(`Import failed: ${e.message}`);
@@ -318,7 +428,7 @@
     }
   }
 
-  // ---------- Ingredient Suggestions (robust: try suggest API, fallback to LLM text) ----------
+  // ---------- Ingredient Suggestions ----------
   async function onSuggest() {
     const q = (elQ?.value || "").trim();
     if (!q) return alert('Type a query (e.g., "pasta").');
@@ -326,14 +436,13 @@
     setBusy(true);
     try {
       let list = [];
-      let usedFallback = false;
 
-      // Try the dedicated suggest endpoint first
+      // Try dedicated suggest endpoint first
+      let usedFallback = false;
       try {
         const resp = await api(`/api/ingest/ingredients/suggest?q=${encodeURIComponent(q)}`);
         list = (resp?.ingredients || []).map(String).map((s) => s.trim()).filter(Boolean);
-      } catch (e) {
-        // Fallback to LLM text mode (always available)
+      } catch {
         usedFallback = true;
         const text = [
           `Suggest ingredients commonly used with: ${q}.`,
@@ -345,40 +454,20 @@
         });
         list = (resp?.items || [])
           .filter((x) => x.type === "ingredient")
-          .map((x) => x.title)
-          .map((s) => String(s).trim())
+          .map((x) => String(x.title).trim())
           .filter(Boolean);
       }
 
-      suggestions.innerHTML = "";
-      if (!list.length) {
-        suggestions.innerHTML = "<li>No suggestions.</li>";
-      } else {
-        list.forEach((name) => {
-          const li = document.createElement("li");
-          li.textContent = name;
-          const btn = document.createElement("button");
-          btn.className = "btn";
-          btn.style.marginLeft = "8px";
-          btn.textContent = "+ Add";
-          btn.onclick = () => addToCart([name]);
-          li.appendChild(btn);
-          suggestions.appendChild(li);
-        });
-        const allBtn = document.createElement("button");
-        allBtn.className = "btn";
-        allBtn.textContent = "Add All";
-        allBtn.style.marginTop = "8px";
-        allBtn.onclick = () => addToCart(list);
-        suggestions.appendChild(allBtn);
+      // Save section state and render as checklist
+      stateSuggestList = list.slice();
+      renderCheckList(suggestions, stateSuggestList);
 
-        if (usedFallback) {
-          const note = document.createElement("div");
-          note.className = "recipe-sub";
-          note.style.marginTop = "6px";
-          note.textContent = "(Using LLM fallback for suggestions.)";
-          suggestions.appendChild(note);
-        }
+      if (usedFallback) {
+        const li = document.createElement("li");
+        li.className = "recipe-sub";
+        li.style.marginTop = "6px";
+        li.textContent = "(Using LLM fallback for suggestions.)";
+        suggestions.appendChild(li);
       }
     } catch (e) {
       console.error(e);
@@ -386,19 +475,6 @@
     } finally {
       setBusy(false);
     }
-  }
-
-  // Renders a simple UL/OL of strings
-  function renderSimpleList(el, arr) {
-    el.innerHTML = "";
-    if (!arr?.length) return;
-    const frag = document.createDocumentFragment();
-    arr.forEach((t) => {
-      const li = document.createElement("li");
-      li.textContent = t;
-      frag.appendChild(li);
-    });
-    el.appendChild(frag);
   }
 
   // ---------- Optimize ----------
