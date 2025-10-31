@@ -2,7 +2,6 @@
 import express from "express";
 import { llmExtractItems } from "../llm.js";
 
-// Choose the same cart backend your main server uses
 const USE_REDIS = String(process.env.CART_BACKEND || "").toLowerCase() === "redis";
 
 let getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems;
@@ -25,6 +24,19 @@ if (USE_REDIS) {
 }
 
 const router = express.Router();
+
+// Friendly GET to show usage instead of 404
+router.get("/llm", (req, res) => {
+  res.status(200).json({
+    ok: false,
+    message: "Use POST /api/ingest/llm with JSON body { userId?, cartId?, text, sourceUrl?, tags? }",
+    example: {
+      userId: "christian",
+      text: "Ingredients: 12 oz spaghetti...",
+      sourceUrl: "https://example.com/garlic-pasta"
+    }
+  });
+});
 
 /**
  * POST /api/ingest/llm
