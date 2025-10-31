@@ -1,88 +1,90 @@
-// server/cart.js (ESM, safe: no top-level import of cart-redis.js)
+/**
+ * server/cart.js — simple in-memory cart store used by index.mjs
+ * Exports: getCart, upsertCart, appendItemsToCart, deleteCart, normalizeItems
+ */
 
-import { randomUUID } from "node:crypto";
-import { log } from "./logger.js";
+const store = new Map(); // key: cartId, value: { cartId, userId, items: [...] }
 
-// ===== In-memory fallback =====
-const memDB = new Map();
-
-const memStore = {
-  get backend() { return "memory"; },
-  async getCart(cartId) { return memDB.get(String(cartId)) || null; },
-  async upsertCart({ cartId, userId, items = [] }) {
-    const id = cartId ? String(cartId) : `${String(userId)}-${shortId()}`;
-    const base = memDB.get(id) || { cartId: id, userId: String(userId), items: [] };
-    const merged = {
-      ...base,
-      userId: String(userId || base.userId),
-      items: Array.isArray(items) && items.length > 0 ? items : base.items,
-    };
-    memDB.set(id, merged);
-    return merged;
-  },
-  async appendItemsToCart({ cartId, userId, items = [] }) {
-    const id = String(cartId);
-    const base = memDB.get(id) || { cartId: id, userId: String(userId), items: [] };
-    const merged = {
-      ...base,
-      userId: String(userId || base.userId),
-      items: [...(base.items || []), ...(items || [])],
-    };
-    memDB.set(id, merged);
-    return merged;
-  },
-  async deleteCart(cartId) { return memDB.delete(String(cartId)); },
-  async ping() { return true; },
-};
-
-function shortId() {
-  return randomUUID().replace(/-/g, "").slice(0, 10);
-}
-
-// ===== normalize util (shared) =====
+/** Normalize arbitrary "ingredient-ish" objects into a strict {name, qty, unit, ...} */
 export function normalizeItems(items) {
   const arr = Array.isArray(items) ? items : [];
-  const now = Date.now();
-  return arr.map((raw, idx) => {
-    const it = raw || {};
+  return arr.map((raw) => {
+    const name = String(raw?.name ?? raw?.title ?? raw?.ingredient ?? "").trim();
+    const unit = String(raw?.unit ?? "").trim();
+    const qtyNum = Number(raw?.qty);
+    const qty = Number.isFinite(qtyNum) ? qtyNum : 1;
     return {
-      id: it.id || `${now}-${Math.random().toString(36).slice(2, 12)}-${idx}`,
-      type: String(it.type || "unknown"),
-      title: String(it.title || "Untitled"),
-      sourceUrl: it.sourceUrl ?? null,
-      durationSec: it.durationSec == null ? null : Number(it.durationSec),
-      addedAt: it.addedAt || new Date().toISOString(),
+      id: raw?.id ?? null,
+      type: raw?.type ?? "ingredient",
+      title: raw?.title ?? name || "Untitled",
+      name: name || "Untitled",
+      qty,
+      unit,
+      notes: raw?.notes ?? null,
+      sourceUrl: raw?.sourceUrl ?? null,
+      addedAt: new Date().toISOString(),
     };
   });
 }
 
-// ===== choose backend safely (dynamic import) =====
-let STORE = memStore;
+export async function getCart(cartId) {
+  return store.get(String(cartId)) || null;
+}
 
-(async function initStore() {
-  const wantRedis = String(process.env.FB_USE_REDIS || "").toLowerCase().trim() === "true";
-  const hasUrl = !!process.env.REDIS_URL;
+export async function upsertCart({ cartId, userId, items }) {
+  const id = String(cartId || userId || cryptoRandomId());
+  const existing = store.get(id);
+  const normalized = normalizeItems(items);
+  const next = {
+    cartId: id,
+    userId: String(userId || existing?.userId || "guest"),
+    items: normalized,
+    updatedAt: new Date().toISOString(),
+  };
+  store.set(id, next);
+  return next;
+}
 
-  if (wantRedis && hasUrl) {
-    try {
-      // dynamic import only when we truly need it
-      const { makeRedisCartStore } = await import("./cart-redis.js");
-      const r = makeRedisCartStore();
-      STORE = r;
-      log("cart_store_backend", { backend: r.backend });
-      return;
-    } catch (err) {
-      log("cart_store_fallback_memory", { reason: String(err?.message || err) });
+export async function appendItemsToCart({ cartId, userId, items }) {
+  const id = String(cartId || userId || cryptoRandomId());
+  const normalized = normalizeItems(items);
+  const cur = store.get(id) || { cartId: id, userId: String(userId || "guest"), items: [] };
+  // simple concat; dedupe by (name|unit) and sum qty
+  const merged = mergeItems([cur.items, normalized]);
+  const next = { cartId: id, userId: cur.userId, items: merged, updatedAt: new Date().toISOString() };
+  store.set(id, next);
+  return next;
+}
+
+export async function deleteCart(cartId) {
+  return store.delete(String(cartId));
+}
+
+// internal helpers
+function mergeItems(arrays) {
+  const map = new Map();
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  for (const items of arrays || []) {
+    for (const raw of items || []) {
+      const name = norm(raw.name || raw.title || "");
+      if (!name) continue;
+      const unit = String(raw.unit || "");
+      const key = `${name}|${unit}`;
+      if (map.has(key)) {
+        const prev = map.get(key);
+        const a = Number(prev.qty), b = Number(raw.qty);
+        if (Number.isFinite(a) && Number.isFinite(b)) prev.qty = a + b;
+        if (!prev.notes && raw.notes) prev.notes = raw.notes;
+        if (!prev.sourceUrl && raw.sourceUrl) prev.sourceUrl = raw.sourceUrl;
+      } else {
+        map.set(key, { ...raw, name: raw.name || raw.title || "Untitled", unit });
+      }
     }
   }
-  STORE = memStore;
-  log("cart_store_backend", { backend: "memory" });
-})();
+  return Array.from(map.values());
+}
 
-// stable API
-export const backend = () => STORE.backend;
-export const getCart = (...a) => STORE.getCart(...a);
-export const upsertCart = (...a) => STORE.upsertCart(...a);
-export const appendItemsToCart = (...a) => STORE.appendItemsToCart(...a);
-export const deleteCart = (...a) => STORE.deleteCart(...a);
-export const ping = (...a) => STORE.ping(...a);
+// tiny id
+function cryptoRandomId() {
+  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}
