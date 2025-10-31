@@ -37,8 +37,37 @@
     .footer{padding:20px 16px;color:var(--muted);border-top:1px solid var(--line);text-align:center;margin-top:16px}
   </style>
 
-  <!-- Load config BEFORE fb.js -->
-  <script defer src="./config.js"></script>
+  <!-- 1) Load config FIRST so it can define window.__FB_API_BASE__ -->
+  <script defer src="./config.js?v=hard"></script>
+
+  <!-- 2) Safety fallback: ensure the API base exists & expose FB_CFG for fb.js -->
+  <script>
+    (function(){
+      // If config.js didn’t define it, force your live Render URL
+      if (!window.__FB_API_BASE__) {
+        window.__FB_API_BASE__ = "https://foodbridge-server-rv0a.onrender.com";
+      }
+      // Optional build tag (helps cache-busting)
+      if (!window.__FB_BUILD_TAG__) {
+        try {
+          window.__FB_BUILD_TAG__ = new Date().toISOString().replace(/[-:TZ.]/g,"").slice(0,12);
+        } catch { window.__FB_BUILD_TAG__ = "fallback"; }
+      }
+      // Small config object some scripts prefer
+      window.FB_CFG = {
+        apiBase: window.__FB_API_BASE__,
+        requireAuth: !!window.__FB_REQUIRE_AUTH__,
+        buildTag: window.__FB_BUILD_TAG__
+      };
+      // Reflect API base in the header once DOM is ready
+      document.addEventListener("DOMContentLoaded", function(){
+        var el = document.getElementById("apiBase");
+        if (el) el.textContent = window.__FB_API_BASE__;
+      });
+    })();
+  </script>
+
+  <!-- 3) Your app code LAST so it sees the globals above -->
   <script defer src="./fb.js?v=20251028"></script>
 </head>
 <body>
