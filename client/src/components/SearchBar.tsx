@@ -16,10 +16,7 @@ export default function SearchBar({
   onSearch,
   setLoading,
 }: {
-  onSearch: (
-    q: { text: string } | { url: string },
-    parsed: RecipeData
-  ) => void;
+  onSearch: (q: { text: string } | { url: string }, parsed: RecipeData) => void;
   setLoading: (v: boolean) => void;
 }) {
   const [url, setUrl] = useState("");
@@ -28,18 +25,33 @@ export default function SearchBar({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const trimmedText = text.trim();
+    const trimmedUrl = url.trim();
+
+    if (!trimmedText && !trimmedUrl) {
+      alert("Enter a recipe URL or paste recipe text.");
+      return;
+    }
+
     setLoading(true);
     try {
-      if (url.trim()) {
-        const og = await ingestUrl(url.trim()); // {ogTitle, ogDesc, text}
-        const parsed = await parseRecipeText(og.text);
-        onSearch({ url: url.trim() }, parsed);
+      // Prefer TEXT if present, otherwise fall back to URL
+      if (trimmedText) {
+        const parsed = await parseRecipeText(trimmedText);
+        onSearch({ text: trimmedText }, parsed);
         dispatch(pushResult({ title: parsed.title, ingredients: parsed.ingredients }));
-      } else if (text.trim()) {
-        const parsed = await parseRecipeText(text.trim());
-        onSearch({ text: text.trim() }, parsed);
+      } else {
+        const og = await ingestUrl(trimmedUrl);
+        const parsed = await parseRecipeText(og.text);
+        onSearch({ url: trimmedUrl }, parsed);
         dispatch(pushResult({ title: parsed.title, ingredients: parsed.ingredients }));
       }
+    } catch (err: any) {
+      console.error(err);
+      alert(
+        (err?.message as string) ||
+          "Sorry, something went wrong. If this was an Instagram link, try copy–pasting the caption text instead."
+      );
     } finally {
       setLoading(false);
     }
@@ -50,27 +62,27 @@ export default function SearchBar({
       <div className="flex gap-2">
         <input
           type="url"
-          placeholder="Paste a recipe URL (supports Instagram via OG fallback)…"
+          placeholder="Paste a recipe URL (better from open sites like Allrecipes/SimplyRecipes)"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           className="flex-1 border rounded px-3 py-2"
         />
-        <button
-          type="submit"
-          className="px-4 py-2 rounded bg-black text-white"
-        >
+        <button type="submit" className="px-4 py-2 rounded bg-black text-white">
           Go
         </button>
       </div>
       <div className="flex gap-2">
         <textarea
-          placeholder="…or paste free-text recipe (ingredients + steps) here"
+          placeholder="…or paste free-text recipe (ingredients + steps)"
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={4}
           className="flex-1 border rounded px-3 py-2"
         />
       </div>
+      <p className="text-xs opacity-70">
+        Tip: Instagram often blocks scraping. If a link fails, copy the caption/recipe text here instead.
+      </p>
     </form>
   );
 }
