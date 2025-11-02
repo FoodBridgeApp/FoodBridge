@@ -1,4 +1,4 @@
-// server/index.mjs  — Full, clean ESM entry (no Redis by default; optional Redis)
+﻿// server/index.mjs  â€” Full, clean ESM entry (no Redis by default; optional Redis)
 // Features: health, version, config, logging, email send (+templated),
 //           demo ingest, cart API (memory/redis), cart email summary, export JSON,
 //           multi-source cart merge, export/email by userId convenience,
@@ -338,11 +338,11 @@ app.post("/api/cart/:cartId/email-summary", authGate(isAuthRequired()), async (r
 
     const html = renderTemplate("cartSummary", {
       title: "Your FoodBridge Cart",
-      intro: "Here’s a summary of your current cart.",
+      intro: "Hereâ€™s a summary of your current cart.",
       cart,
       ctaText: "Open FoodBridge",
       ctaUrl: "https://foodbridgeapp.github.io/FoodBridge",
-      footer: "If this wasn’t you, just ignore this email.",
+      footer: "If this wasnâ€™t you, just ignore this email.",
     });
 
     const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
@@ -489,7 +489,7 @@ app.post("/api/cart/email", authGate(isAuthRequired()), async (req, res) => {
     const cart = await getCartByUser(String(userId));
     if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
 
-    const lines = (cart.items || []).map((i) => `• ${i.name}${i.qty ? " " + i.qty : ""}${i.unit ? " " + i.unit : ""}`);
+    const lines = (cart.items || []).map((i) => `â€¢ ${i.name}${i.qty ? " " + i.qty : ""}${i.unit ? " " + i.unit : ""}`);
     const html = `
       <h2>FoodBridge Cart</h2>
       <p>User: ${cart.userId || userId}</p>
@@ -539,3 +539,46 @@ app.listen(PORT, () => {
     shortCommit: SHORT_COMMIT,
   });
 });
+
+// ===== FB minimal endpoints on 'app' (prefixed with /api) =====
+app.post('/api/ingest/url', async (req, res) => {
+  try {
+    const url = (req.body && req.body.url) || '';
+    if (!url) return res.status(400).json({ error: 'url required' });
+    const r = await fetch(url, { redirect: 'follow' });
+    if (!r.ok) return res.status(502).json({ error: 'failed to fetch source url', status: r.status });
+    let html = await r.text();
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
+    const pickMeta = (name) => {
+      const rx = new RegExp(<meta[^>]+(?:property|name)=["']["'][^>]*content=["']([^"']+)["'][^>]*>, 'i');
+      const m = rx.exec(html); return m ? m[1] : '';
+    };
+    const ogTitle = pickMeta('og:title') || pickMeta('twitter:title') || '';
+    const ogDesc  = pickMeta('og:description') || pickMeta('description') || '';
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    res.json({ data: { ogTitle, ogDesc, text } });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/llm/parse', async (req, res) => {
+  try {
+    const raw = (req.body && req.body.text) ? String(req.body.text) : '';
+    if (!raw) return res.status(400).json({ error: 'text required' });
+    const [titlePart, rest] = raw.split(/:\s*/);
+    const title = titlePart?.trim() || 'Recipe';
+    const ingBlob = rest || raw;
+    const ingredients = ingBlob.split(/[;,\n]/).map(s => s.trim()).filter(Boolean);
+    const steps = [
+      'Prepare ingredients.',
+      'Follow standard method based on the recipe text.',
+      'Adjust seasoning and serve.'
+    ];
+    res.json({ data: { title, ingredients, steps }});
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+// ===== end FB endpoints =====
+
