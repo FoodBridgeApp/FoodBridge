@@ -1,5 +1,5 @@
-import { useDispatch, useSelector } from "react-redux";
-import { RootState } from "../store";
+﻿import { useDispatch, useSelector } from "react-redux";
+import type { RootState } from "../store";
 import { clearCart, removeFromCart } from "../store/cartSlice";
 
 export default function Cart() {
@@ -31,7 +31,7 @@ export default function Cart() {
               {items.map((i) => (
                 <li key={i.id} className="p-2 text-sm flex items-center gap-2">
                   <span className="flex-1">
-                    {i.label} <span className="opacity-60">×{i.qty}</span>
+                    {i.label} <span className="opacity-60">Ã—{i.qty}</span>
                   </span>
                   <button
                     className="text-xs px-2 py-1 border rounded"
