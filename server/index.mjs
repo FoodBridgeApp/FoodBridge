@@ -14,6 +14,83 @@ const ALLOW_ORIGINS = new Set([
 
 const app = express();
 
+
+// JSON body parsing for POSTs (idempotent)
+ { if (!app._fbJsonApplied) { app.use(require('express').json({ limit: '1mb' })); app._fbJsonApplied = true; } } catch {}
+
+
+// ======= FB quick endpoints (inserted just after app = express()) =======
+
+app.post('/api/ingest/url', async (req, res) => {
+
+  try {
+
+    const url = (req.body && req.body.url) || '';
+
+    if (!url) return res.status(400).json({ error: 'url required' });
+
+    const r = await fetch(url, { redirect: 'follow' });
+
+    if (!r.ok) return res.status(502).json({ error: 'failed to fetch source url', status: r.status });
+
+    let html = await r.text();
+
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
+
+    const pickMeta = (name) => {
+
+      const rx = new RegExp(\<meta[^>]+(?:property|name)=["']\["'][^>]*content=["']([^"']+)["'][^>]*>\, 'i');
+
+      const m = rx.exec(html); return m ? m[1] : '';
+
+    };
+
+    const ogTitle = pickMeta('og:title') || pickMeta('twitter:title') || '';
+
+    const ogDesc  = pickMeta('og:description') || pickMeta('description') || '';
+
+    const text    = html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+
+    res.json({ ok: true, data: { ogTitle, ogDesc, text } });
+
+  } catch (e) {
+
+    res.status(500).json({ ok:false, error: String(e?.message || e) });
+
+  }
+
+});
+
+
+app.post('/api/llm/parse', async (req, res) => {
+
+  try {
+
+    const raw = (req.body && req.body.text) ? String(req.body.text) : '';
+
+    if (!raw) return res.status(400).json({ error: 'text required' });
+
+    const [titlePart, rest] = raw.split(/:\s*/);
+
+    const title = (titlePart || 'Recipe').trim();
+
+    const ingBlob = rest || raw;
+
+    const ingredients = ingBlob.split(/[;,\n]/).map(s => s.trim()).filter(Boolean);
+
+    const steps = ['Prepare ingredients.','Follow standard method based on the recipe text.','Adjust seasoning and serve.'];
+
+    res.json({ ok: true, data: { title, ingredients, steps }});
+
+  } catch (e) {
+
+    res.status(500).json({ ok:false, error: String(e?.message || e) });
+
+  }
+
+});
+// ======= end FB quick endpoints =======
+
 // CORS
 app.use(
   cors({
@@ -44,7 +121,7 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, status: "healthy", ts: Date.now() });
 });
 
-// ======= Minimal endpoints youÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢re testing =======
+// ======= Minimal endpoints youÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢re testing =======
 app.post("/api/ingest/url", async (req, res) => {
   try {
     const url = (req.body && req.body.url) || "";
