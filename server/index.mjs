@@ -44,7 +44,7 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, status: "healthy", ts: Date.now() });
 });
 
-// ======= Minimal endpoints you’re testing =======
+// ======= Minimal endpoints youâ€™re testing =======
 app.post("/api/ingest/url", async (req, res) => {
   try {
     const url = (req.body && req.body.url) || "";
@@ -64,10 +64,7 @@ app.post("/api/ingest/url", async (req, res) => {
 
     const pickMeta = (name) => {
       // IMPORTANT: The <meta ...> is inside a QUOTED template string
-      const rx = new RegExp(
-        <meta[^>]+(?:property|name)=["']["'][^>]*content=["']([^"']+)["'][^>]*>,
-        "i"
-      );
+      const rx = new RegExp("<meta[^>]+(?:property|name)=["']["'][^>]*content=["']([^"']+)["'][^>]*>", 'i');
       const m = rx.exec(html);
       return m ? m[1] : "";
     };
