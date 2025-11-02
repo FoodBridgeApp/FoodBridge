@@ -35,7 +35,6 @@ export default function SearchBar({
 
     setLoading(true);
     try {
-      // Prefer TEXT if present, otherwise fall back to URL
       if (trimmedText) {
         const parsed = await parseRecipeText(trimmedText);
         onSearch({ text: trimmedText }, parsed);
@@ -50,7 +49,7 @@ export default function SearchBar({
       console.error(err);
       alert(
         (err?.message as string) ||
-          "Sorry, something went wrong. If this was an Instagram link, try copy–pasting the caption text instead."
+          "Sorry, something went wrong. If this was a blocked link, copy/paste the recipe text instead."
       );
     } finally {
       setLoading(false);
@@ -62,7 +61,7 @@ export default function SearchBar({
       <div className="flex gap-2">
         <input
           type="url"
-          placeholder="Paste a recipe URL (better from open sites like Allrecipes/SimplyRecipes)"
+          placeholder="Paste a recipe URL (works better for open sites; blocked ones will auto-fallback)"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           className="flex-1 border rounded px-3 py-2"
@@ -80,9 +79,6 @@ export default function SearchBar({
           className="flex-1 border rounded px-3 py-2"
         />
       </div>
-      <p className="text-xs opacity-70">
-        Tip: Instagram often blocks scraping. If a link fails, copy the caption/recipe text here instead.
-      </p>
     </form>
   );
 }
