@@ -9,7 +9,7 @@ app.post('/api/ingest/url', async (req, res) => {
     let html = await r.text();
     html = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
     const pickMeta = (name) => {
-      const rx = new RegExp($(new RegExp(<meta[^>]+(?:property|name)=["']["'][^>]*content=["']([^"']+)["'][^>]*>, 'i').Groups[1].Value), 'i');
+      const rx = new RegExp($(new RegExp(`<meta[^>]+(?:property|name)=["']["'][^>]*content=["']([^"']+)["'][^>]*>`,  'i').Groups[1].Value), 'i');
       const m = rx.exec(html); return m ? m[1] : '';
     };
     const ogTitle = pickMeta('og:title') || pickMeta('twitter:title') || '';
