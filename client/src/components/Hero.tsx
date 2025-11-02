@@ -1,4 +1,4 @@
-export default function Hero() {
+﻿export default function Hero() {
   return (
     <section className="p-8 text-center opacity-80">
       <h1 className="text-2xl font-semibold">Search for a recipe or paste a link</h1>
