@@ -44,7 +44,7 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, status: "healthy", ts: Date.now() });
 });
 
-// ======= Minimal endpoints youâ€™re testing =======
+// ======= Minimal endpoints youÃ¢â‚¬â„¢re testing =======
 app.post("/api/ingest/url", async (req, res) => {
   try {
     const url = (req.body && req.body.url) || "";
