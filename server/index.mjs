@@ -541,3 +541,67 @@ app.listen(PORT, () => {
   });
 });
 
+
+// === FB API START ===
+app.post('/api/llm/parse', async (req, res) => {
+  try {
+    const raw = (req.body?.text || '').toString();
+    if (!raw) return res.status(400).json({ error: 'Missing text' });
+
+    // Naive parser to unblock UI (replace later with real LLM call)
+    const titleMatch = raw.split('\n')[0].split(':')[0].trim();
+    const title = titleMatch || 'Parsed Recipe';
+
+    // Ingredients: split by semicolons or newlines; keep short lines
+    const parts = raw.split(/[\n;]+/).map(s => s.trim()).filter(Boolean);
+    const guesses = parts.filter(s =>
+      /\d/.test(s) || /(cup|tbsp|tsp|g|ml|oz|clove|pinch|teaspoon|tablespoon|pound|lb|kg|grams?)/i.test(s)
+    );
+    const ingredients = Array.from(new Set(guesses)).slice(0, 50);
+
+    // Steps: if we can’t detect, make a simple 3-step flow
+    let steps = parts.filter(s => /^\d+[\).\s]/.test(s));
+    if (!steps.length) {
+      steps = [
+        "Prep ingredients.",
+        "Cook according to recipe directions.",
+        "Taste and adjust seasoning, then serve."
+      ];
+    }
+    return res.json({ data: { title, ingredients, steps } });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'parse-failed' });
+  }
+});
+
+app.post('/api/ingest/url', async (req, res) => {
+  try {
+    const url = (req.body?.url || '').toString();
+    if (!url) return res.status(400).json({ error: 'Missing url' });
+
+    // Node 20+ has global fetch
+    const r = await fetch(url, { redirect: 'follow' });
+    const html = await r.text();
+    const ogTitle = (html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)?.[1])
+      || (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]) || "";
+    const ogDesc = (html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)?.[1])
+      || (html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i)?.[1]) || "";
+
+    // super-naive text extraction to unblock
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 20000);
+
+    return res.json({ data: { ogTitle, ogDesc, text } });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'ingest-failed' });
+  }
+});
+// === FB API END ===
+
