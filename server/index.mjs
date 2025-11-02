@@ -1,4 +1,4 @@
-// server/index.mjs  — Full, clean ESM entry (no Redis by default; optional Redis)
+﻿// server/index.mjs  â€” Full, clean ESM entry (no Redis by default; optional Redis)
 // Features: health, version, config, logging, email send (+templated),
 //           demo ingest, cart API (memory/redis), cart email summary, export JSON,
 //           multi-source cart merge, export/email by userId convenience,
@@ -6,6 +6,7 @@
 
 import "dotenv/config";
 import express from "express";
+import cors from 'cors';
 import cors from "cors";
 import nodemailer from "nodemailer";
 
@@ -338,11 +339,11 @@ app.post("/api/cart/:cartId/email-summary", authGate(isAuthRequired()), async (r
 
     const html = renderTemplate("cartSummary", {
       title: "Your FoodBridge Cart",
-      intro: "Here’s a summary of your current cart.",
+      intro: "Hereâ€™s a summary of your current cart.",
       cart,
       ctaText: "Open FoodBridge",
       ctaUrl: "https://foodbridgeapp.github.io/FoodBridge",
-      footer: "If this wasn’t you, just ignore this email.",
+      footer: "If this wasnâ€™t you, just ignore this email.",
     });
 
     const sender = from && isValidEmail(from) ? from : process.env.SMTP_USER;
@@ -489,7 +490,7 @@ app.post("/api/cart/email", authGate(isAuthRequired()), async (req, res) => {
     const cart = await getCartByUser(String(userId));
     if (!cart) return res.status(404).json({ ok: false, error: "cart_not_found", reqId: req.id });
 
-    const lines = (cart.items || []).map((i) => `• ${i.name}${i.qty ? " " + i.qty : ""}${i.unit ? " " + i.unit : ""}`);
+    const lines = (cart.items || []).map((i) => `â€¢ ${i.name}${i.qty ? " " + i.qty : ""}${i.unit ? " " + i.unit : ""}`);
     const html = `
       <h2>FoodBridge Cart</h2>
       <p>User: ${cart.userId || userId}</p>
@@ -539,3 +540,4 @@ app.listen(PORT, () => {
     shortCommit: SHORT_COMMIT,
   });
 });
+
