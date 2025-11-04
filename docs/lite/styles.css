@@ -10,4 +10,4 @@ section{margin:.6rem 0;padding:.6rem;border:1px solid var(--line);border-radius:
 .loader{border:1px dashed var(--line);padding:.5rem .7rem;border-radius:10px}
 .error{color:#fff;background:#c33;padding:.55rem .7rem;border-radius:10px}
 .ok{color:#fff;background:#2c5;padding:.55rem .7rem;border-radius:10px}
-pre.log{white-space:pre-wrap;background:#f6f6f6;padding:.5rem;border-radius:10px;border:1px solid var(--line);max-height:40vh;overflow:auto}
+pre.log{white-space:pre-wrap;background:#f6f6f6;padding:.5rem;border:1px solid var(--line);border-radius:10px;max-height:40vh;overflow:auto}

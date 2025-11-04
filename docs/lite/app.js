@@ -10,7 +10,6 @@ function setStatus(t, kind="hint"){
   statusEl.className = kind; statusEl.textContent = t;
 }
 function showResult(recipe){
-  // Defensive defaults so we never crash on undefined
   const title = recipe?.title ?? "(No title)";
   const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
   const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
@@ -33,15 +32,12 @@ async function parse(q){
     headers:{ "Content-Type":"application/json" },
     body: JSON.stringify({ q })
   });
-
-  // Bubble up server diagnostics in the UI
   const text = await res.text();
   let data = null; try { data = JSON.parse(text); } catch {}
   if(!res.ok){
     const msg = data?.error || text || `HTTP ${res.status}`;
     throw new Error(`Server error: ${msg}`);
   }
-  // Normalize payload shape so UI never explodes
   const recipe = data?.recipe ?? {
     id: `empty-${Date.now()}`,
     title: data?.title || `Result for: ${q}`,
@@ -65,7 +61,6 @@ form.addEventListener("submit", async (e)=>{
     showResult(out.recipe);
   }catch(err){
     setStatus(err?.message || "Unknown error", "error");
-    // Keep screen intact; do not crash
     resultEl.innerHTML = `<pre class="log">${(err?.stack||"").slice(0,4000)}</pre>`;
     resultEl.hidden = false;
   }
