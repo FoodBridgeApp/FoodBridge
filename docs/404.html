@@ -1,4 +1,107 @@
-﻿<!doctype html><meta charset="utf-8">
-<meta http-equiv="refresh" content="0; url=/FoodBridge/lite/">
-<link rel="canonical" href="/FoodBridge/lite/">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3C/svg%3E">
+﻿<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FoodBridge Lite</title>
+<!-- Inline 1x1 favicon to kill 404s -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2716%27 height=%2716%27%3E%3Crect width=%2716%27 height=%2716%27 fill=%27%23000%27/%3E%3C/svg%3E">
+<meta http-equiv="Cache-Control" content="no-cache">
+<style>
+:root{ --fg:#111; --muted:#666; --line:#ddd; --err:#900; --ok:#0a0;}
+body{font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial;color:var(--fg);margin:0;background:#fff}
+main{max-width:900px;margin:0 auto;padding:1.25rem}
+form{display:flex;gap:.5rem;margin-bottom:.75rem}
+input{flex:1;padding:.6rem .7rem;border:1px solid var(--line);border-radius:10px}
+button{padding:.6rem .9rem;border-radius:10px;border:1px solid var(--line);background:#fafafa;cursor:pointer}
+h2{margin:.8rem 0 .2rem}
+section{margin:.6rem 0;padding:.6rem;border:1px solid var(--line);border-radius:12px}
+.hint{color:var(--muted)}
+.loader{border:1px dashed var(--line);padding:.5rem .7rem;border-radius:10px}
+.error{color:#fff;background:#c33;padding:.55rem .7rem;border-radius:10px}
+.ok{color:#fff;background:#2c5;padding:.55rem .7rem;border-radius:10px}
+pre.log{white-space:pre-wrap;background:#f6f6f6;padding:.5rem;border-radius:10px;border:1px solid var(--line);max-height:40vh;overflow:auto}
+small.dim{color:var(--muted)}
+</style>
+
+<main id="app">
+  <h1>FoodBridge Lite</h1>
+  <form id="f" autocomplete="off">
+    <input id="q" placeholder="Type a dish or paste a link (e.g., pizza)" autofocus />
+    <button>Parse</button>
+  </form>
+  <div id="status" class="hint">Ready.</div>
+  <div id="result" hidden></div>
+  <small class="dim">API: <span id="api"></span></small>
+</main>
+
+<script>
+const API_BASE = "https://foodbridge-server-rv0a.onrender.com";
+document.querySelector("#api").textContent = API_BASE;
+
+const $ = (s)=>document.querySelector(s);
+const statusEl = $("#status");
+const resultEl = $("#result");
+const form = $("#f");
+const input = $("#q");
+
+function setStatus(t, kind="hint"){ statusEl.className = kind; statusEl.textContent = t; }
+
+function showResult(recipe){
+  const title = recipe?.title ?? "(No title)";
+  const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
+
+  resultEl.innerHTML = `
+    <h2>${title}</h2>
+    <section><h3>Ingredients</h3>
+      <ul>${ingredients.map(i=>`<li>${(i.qty??"")} ${(i.unit??"")} ${i.name??""}`.trim()+"</li>").join("") || "<li>(none)</li>"}</ul>
+    </section>
+    <section><h3>Steps</h3>
+      <ol>${steps.map(s=>`<li>${s?.text??""}</li>`).join("") || "<li>(none)</li>"}</ol>
+    </section>
+  `;
+  resultEl.hidden = false;
+}
+
+async function parse(q){
+  const res = await fetch(\`\${API_BASE}/api/llm/parse\`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ q })
+  });
+
+  const text = await res.text();
+  let data = null; try { data = JSON.parse(text); } catch {}
+  if(!res.ok){
+    const msg = data?.error || text || \`HTTP \${res.status}\`;
+    throw new Error(\`Server error: \${msg}\`);
+  }
+
+  // Normalize payload shape so UI never explodes
+  const recipe = data?.recipe ?? {
+    id: \`empty-\${Date.now()}\`,
+    title: data?.title || \`Result for: \${q}\`,
+    ingredients: Array.isArray(data?.ingredients) ? data.ingredients : [],
+    steps: Array.isArray(data?.steps) ? data.steps : [],
+    sections: Array.isArray(data?.sections) ? data.sections : [],
+    tags: Array.isArray(data?.tags) ? data.tags : []
+  };
+  return { ok: true, recipe };
+}
+
+form.addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  const q = input.value.trim();
+  if(!q){ setStatus("Type something to parse.", "hint"); return; }
+  resultEl.hidden = true;
+  setStatus("Parsing…", "loader");
+  try{
+    const out = await parse(q);
+    setStatus("Done.", "ok");
+    showResult(out.recipe);
+  }catch(err){
+    setStatus(err?.message || "Unknown error", "error");
+    resultEl.innerHTML = \`<pre class="log">\${(err?.stack||"").slice(0,4000)}</pre>\`;
+    resultEl.hidden = false;
+  }
+});
+</script>
