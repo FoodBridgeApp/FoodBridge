@@ -1,0 +1,5 @@
+﻿.page { max-width: 900px; margin: 0 auto; padding: 1.5rem; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+.searchbar { display: flex; gap: .5rem; margin-bottom: 1rem; }
+.loader { padding: .75rem 1rem; border: 1px dashed #bbb; border-radius: 8px; }
+.toast.error { background: #fee; color: #900; padding: .75rem 1rem; border: 1px solid #f99; border-radius: 8px; }
+.hint { color: #666; }
