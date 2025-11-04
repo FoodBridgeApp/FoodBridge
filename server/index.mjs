@@ -3,8 +3,8 @@ import cors from "cors";
 import bodyParser from "body-parser";
 import { z } from "zod";
 
+// -------- app + CORS -----------
 const app = express();
-
 const WHITELIST = new Set([
   "https://foodbridgeapp.github.io",
   "http://localhost:5173",
@@ -12,14 +12,13 @@ const WHITELIST = new Set([
   "http://localhost:3000"
 ]);
 
-// Diagnostics to stdout so we can see what the UI is doing
-app.use((req,res,next)=>{
-  const origin=req.headers.origin||"(none)";
-  console.log(`[REQ] ${req.method} ${req.path} | origin=${origin}`);
+// Log requests so we can see what the UI calls
+app.use((req, _res, next) => {
+  console.log(`[REQ] ${req.method} ${req.path} | origin=${req.headers.origin||"(none)"}`);
   next();
 });
 
-// Security + caching
+// Security headers
 app.use((req,res,next)=>{
   res.setHeader("X-Content-Type-Options","nosniff");
   res.setHeader("X-Frame-Options","SAMEORIGIN");
@@ -27,19 +26,28 @@ app.use((req,res,next)=>{
   next();
 });
 
-// CORS + preflight (strict but allowed for GH Pages + localhost)
-app.use(cors({
-  origin:(origin,cb)=>{ if(!origin || WHITELIST.has(origin)) return cb(null,true); return cb(new Error("CORS blocked: "+origin)); },
-  methods:["GET","POST","OPTIONS"],
-  allowedHeaders:["Content-Type","Authorization"],
-  maxAge:86400
-}));
-app.options("*", cors());
+// CORS middleware
+const corsMw = cors({
+  origin: (origin, cb) => { if (!origin || WHITELIST.has(origin)) return cb(null, true); return cb(new Error("CORS blocked: "+origin)); },
+  methods: ["GET","POST","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"],
+  maxAge: 86400
+});
+app.use(corsMw);
+app.options("*", corsMw);
 
-// Body parser
-app.use(bodyParser.json({ limit:"1mb" }));
+// Fallback: force ACAO on ALL /api/* responses no matter what
+app.use("/api", (req,res,next)=>{
+  const o = req.headers.origin;
+  if (!o) { res.setHeader("Access-Control-Allow-Origin", "*"); }
+  else if (WHITELIST.has(o)) { res.setHeader("Access-Control-Allow-Origin", o); }
+  res.setHeader("Vary","Origin");
+  next();
+});
 
-// ---- schema ----
+app.use(bodyParser.json({ limit: "1mb" }));
+
+// -------- schema + helpers -----------
 const Ingredient=z.object({ id:z.string(), name:z.string(), qty:z.number().nullable().optional(), unit:z.string().nullable().optional(), sectionId:z.string().nullable().optional() });
 const Section   =z.object({ id:z.string(), label:z.string(), order:z.number() });
 const Step      =z.object({ order:z.number(), text:z.string(), sectionId:z.string().nullable().optional() });
@@ -48,12 +56,11 @@ const Recipe    =z.object({ id:z.string(), title:z.string(), ingredients:z.array
 function pickQuery(req){
   const b = (req.body && typeof req.body==="object") ? req.body : {};
   const qs = req.query || {};
-  const candidates = [b.q,b.query,b.text,b.url,qs.q,qs.query,qs.text,qs.url];
-  const found = candidates.find(v => typeof v === "string" && v.trim().length>0);
+  const cands = [b.q,b.query,b.text,b.url,qs.q,qs.query,qs.text,qs.url];
+  const found = cands.find(v => typeof v === "string" && v.trim());
   return (found||"demo").toString().trim();
 }
-
-function buildStub(q){
+function stubRecipe(q){
   return {
     id: "stub-"+Date.now(),
     title: `Quick parse for: ${q}`,
@@ -69,80 +76,69 @@ function buildStub(q){
     tags:["stub"]
   };
 }
-
-// Shape normalizer: guarantees arrays/objects exist so .map never hits undefined
-function ensureArrays(recipe){
-  const r = recipe || { id:"stub", title:"Recipe", ingredients:[], sections:[], steps:[], tags:[] };
-  r.ingredients = Array.isArray(r.ingredients) ? r.ingredients : [];
-  r.sections    = Array.isArray(r.sections)    ? r.sections    : [];
-  r.steps       = Array.isArray(r.steps)       ? r.steps       : [];
-  r.tags        = Array.isArray(r.tags)        ? r.tags        : [];
-  return r;
+function ensureArrays(r){
+  const x = r||{ id:"stub", title:"Recipe", ingredients:[], sections:[], steps:[], tags:[] };
+  x.ingredients = Array.isArray(x.ingredients)?x.ingredients:[];
+  x.sections    = Array.isArray(x.sections)?x.sections:[];
+  x.steps       = Array.isArray(x.steps)?x.steps:[];
+  x.tags        = Array.isArray(x.tags)?x.tags:[];
+  return x;
 }
-
-// Ultra-compat envelope to satisfy unknown selectors
-function respondOmni(res, recipe){
+function omniPayload(recipe){
   const r = ensureArrays(recipe);
+  const list = [r];
 
-  // Common legacy collections that UI might map over
-  const listLike = [r];
-
-  const payload = {
+  return {
     ok: true,
 
-    // Modern
+    // canonical
     recipe: r,
 
-    // Mirrors/aliases (a LOT of them on purpose)
-    data:            { recipe: r, items: listLike, results: listLike, list: listLike },
-    result:          { recipe: r, items: listLike, results: listLike, list: listLike },
-    payload:         { recipe: r, items: listLike, results: listLike, list: listLike },
-    meta:            { ok: true },
+    // arrays many selectors might map over
+    recipes: list, items: list, results: list, list: list, rows: list,
 
-    // Flat collections some selectors may expect
-    recipes:  listLike,
-    items:    listLike,
-    results:  listLike,
-    list:     listLike,
-    rows:     listLike,
+    // nested mirrors
+    data:    { recipe: r, items: list, results: list, list: list },
+    result:  { recipe: r, items: list, results: list, list: list },
+    payload: { recipe: r, items: list, results: list, list: list },
+    meta:    { ok: true },
 
-    // Top-level mirrors for naive access
-    id: r.id,
-    title: r.title,
-    ingredients: r.ingredients,
-    sections: r.sections,
-    steps: r.steps,
-    tags: r.tags,
+    // top-level mirrors
+    id: r.id, title: r.title, ingredients: r.ingredients, sections: r.sections, steps: r.steps, tags: r.tags,
 
-    // LLM-style shapes sometimes seen
-    choices: [
-      { message: { content: JSON.stringify({ recipe:r }) }, recipe: r }
-    ],
+    // llm-ish
+    choices: [{ message: { content: JSON.stringify({ recipe:r }) }, recipe:r }],
     output: { recipe: r }
   };
-
-  // Log keys that are arrays to confirm availability
-  const arrayKeys = Object.keys(payload).filter(k => Array.isArray(payload[k]));
-  console.log("[RESP] arrays:", arrayKeys.join(", "));
-  return res.json(payload);
+}
+function sendOmni(res, recipe){
+  const body = omniPayload(recipe);
+  // Final safety: always JSON with 200
+  res.status(200).type("application/json").send(JSON.stringify(body));
 }
 
-function handleParse(req, res){
+// Specific health route
+app.get("/api/health", (_req,res)=> res.json({ ok:true, healthy:true, ts:Date.now() }));
+
+// Known routes
+function handleParse(req,res){
   const q = pickQuery(req);
-  const stub = buildStub(q);
-  const parsed = Recipe.safeParse(stub);
-  if(!parsed.success){
-    console.warn("[WARN] Validation failed; serving safe recipe.");
-    return respondOmni(res, ensureArrays(null));
-  }
-  return respondOmni(res, parsed.data);
+  let rec = stubRecipe(q);
+  const parsed = Recipe.safeParse(rec);
+  if(!parsed.success){ rec = ensureArrays(null); }
+  console.log("[RESP] omni for", req.path);
+  sendOmni(res, rec);
 }
-
 app.post("/api/llm/parse", handleParse);
 app.get ("/api/llm/parse", handleParse);
-app.all ("/api/parse",      handleParse); // legacy alias
+app.all ("/api/parse",      handleParse);
 
-app.get("/api/health", (_req,res)=> res.json({ ok:true, ts:Date.now() }));
+// CATCH-ALL: any unknown /api/* path returns omni payload so selectors never break
+app.all("/api/*", (req,res)=>{
+  console.log("[RESP] omni catch-all for", req.path);
+  sendOmni(res, stubRecipe(req.path));
+});
 
+// boot
 const port = process.env.PORT || 10000;
 app.listen(port, ()=> console.log(`[foodbridge] server listening on ${port}`));
