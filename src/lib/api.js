@@ -1,15 +1,28 @@
-﻿export const API_BASE = "https://foodbridge-server-rv0a.onrender.com";
+﻿import { coerceRecipe, emptyRecipe } from "./shape";
+
+export const API_BASE = "https://foodbridge-server-rv0a.onrender.com";
+
 export async function parseRecipe(q) {
-  const resp = await fetch(${API_BASE}/api/llm/parse, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ q })
-  }).catch((e)=>{ throw new Error("Network error: " + (e?.message||e)); });
-  if (!resp?.ok) {
-    const text = await resp.text().catch(()=> "");
-    throw new Error(\Parse failed (\): \\);
+  let resp;
+  try {
+    resp = await fetch(\\/api/llm/parse\, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q: String(q ?? "").trim() })
+    });
+  } catch (e) {
+    return { ok: false, error: "Network error", recipe: emptyRecipe };
   }
-  const data = await resp.json();
-  if (!data?.ok || !data?.recipe) throw new Error("Invalid payload from server.");
-  return data;
+
+  // If server returns non-200, still try to read JSON; if that fails, fall back
+  let data = null;
+  try { data = await resp.json(); } catch { /* ignore */ }
+
+  if (!resp.ok || !data || data.ok === false) {
+    const msg = (data && (data.error || data.message)) || "LLM parse failed";
+    return { ok: false, error: msg, recipe: emptyRecipe };
+  }
+
+  const recipe = coerceRecipe(data.recipe);
+  return { ok: true, recipe };
 }

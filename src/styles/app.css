@@ -1,5 +1,7 @@
 ﻿.page { max-width: 900px; margin: 0 auto; padding: 1.5rem; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
 .searchbar { display: flex; gap: .5rem; margin-bottom: 1rem; }
-.loader { padding: .75rem 1rem; border: 1px dashed #bbb; border-radius: 8px; }
-.toast.error { background: #fee; color: #900; padding: .75rem 1rem; border: 1px solid #f99; border-radius: 8px; }
+.searchbar input { flex: 1; padding: .5rem .75rem; }
+.toast { padding: .60rem .8rem; border-radius: 8px; margin: .5rem 0; }
+.toast.info { background: #eef5ff; border: 1px solid #a7c4ff; color: #0b3d91; }
+.toast.error { background: #fee; border: 1px solid #f99; color: #900; }
 .hint { color: #666; }
