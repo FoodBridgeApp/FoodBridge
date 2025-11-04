@@ -1,0 +1,9 @@
+﻿:root { --pad: 1.1rem; --radius: 12px; --muted:#666; --err:#900; --errbg:#fee; --errbr:#f99; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+.page { max-width: 900px; margin: 0 auto; padding: var(--pad); }
+.searchbar { display:flex; gap:.5rem; margin:.75rem 0 1rem; }
+.searchbar input { flex:1; padding:.6rem .8rem; border:1px solid #ccc; border-radius: var(--radius); }
+.searchbar button { padding:.6rem 1rem; border:1px solid #ccc; border-radius: var(--radius); background:#fafafa; cursor:pointer; }
+.toast { margin:.5rem 0; padding:.7rem 1rem; border-radius: var(--radius); border:1px solid var(--errbr); background: var(--errbg); color: var(--err); }
+.result h2 { margin: .5rem 0 0.25rem; }
