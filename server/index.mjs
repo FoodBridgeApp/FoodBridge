@@ -1,119 +1,63 @@
 ﻿import express from "express";
-import cors from "cors";
-import bodyParser from "body-parser";
-import { z } from "zod";
-
+import fetch from "node-fetch";
 const app = express();
+const PORT = process.env.PORT || 10000;
 
-// --- whitelist GitHub Pages + localhost ---
-const WHITELIST = new Set([
+// Allow both Render and GitHub Pages
+const ALLOWED = [
   "https://foodbridgeapp.github.io",
+  "https://foodbridgeapp.github.io/FoodBridge",
   "http://localhost:5173",
-  "http://localhost:4173",
-  "http://localhost:3000",
-]);
+  "http://localhost:3000"
+];
 
-// --- CORS that also covers errors ---
-const corsCheck = (origin, cb) => {
-  if (!origin || WHITELIST.has(origin)) return cb(null, true);
-  return cb(new Error("CORS blocked: " + origin));
-};
-
-app.use((req, res, next) => {
-  // security
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+app.use((req,res,next)=>{
+  const origin=req.headers.origin||"";
+  const allow=ALLOWED.find(o=>origin.startsWith(o))?origin:"*";
+  res.setHeader("Access-Control-Allow-Origin",allow);
+  res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers","Content-Type, Authorization, Origin");
+  if(req.method==="OPTIONS")return res.sendStatus(204);
   next();
 });
+app.use(express.json({limit:"1mb"}));
 
-app.use(cors({
-  origin: corsCheck,
-  methods: ["GET","POST","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization"],
-  maxAge: 86400
-}));
-app.options("*", cors());
-
-// parse json
-app.use(bodyParser.json({ limit: "1mb" }));
-
-// --- schemas ---
-const Ingredient = z.object({
-  id: z.string(),
-  name: z.string(),
-  qty: z.number().nullable().optional(),
-  unit: z.string().nullable().optional(),
-  sectionId: z.string().nullable().optional(),
-});
-const Section = z.object({ id: z.string(), label: z.string(), order: z.number() });
-const Step = z.object({ order: z.number(), text: z.string(), sectionId: z.string().nullable().optional() });
-
-const RecipeSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  ingredients: z.array(Ingredient).default([]),
-  sections: z.array(Section).default([]),
-  steps: z.array(Step).default([]),
-  tags: z.array(z.string()).default([])
-});
-
-// --- helper: safe OK payload no matter what ---
-function okRecipe(q) {
-  const base = {
-    id: "stub-" + Date.now(),
-    title: q ? `Quick parse for: ${q}` : "Quick parse",
-    ingredients: [],
-    sections: [],
-    steps: [],
-    tags: []
+function synth(q){
+  const t=q.trim()||"Untitled";
+  return {
+    id:`stub-${Date.now()}`,
+    title:`${t[0].toUpperCase()+t.slice(1)} (quick start)`,
+    sections:[{id:"s1",label:"Main",order:1}],
+    ingredients:[
+      {id:"i1",name:"Flour",qty:"2",unit:"cups",sectionId:"s1"},
+      {id:"i2",name:"Water",qty:"1",unit:"cup",sectionId:"s1"},
+      {id:"i3",name:"Salt",qty:"1",unit:"tsp",sectionId:"s1"},
+      {id:"i4",name:"Yeast",qty:"2¼",unit:"tsp",sectionId:"s1"},
+      {id:"i5",name:"Olive oil",qty:"2",unit:"tbsp",sectionId:"s1"}
+    ],
+    steps:[
+      {order:1,text:"Mix dry ingredients; add water and oil; knead 8–10 min."},
+      {order:2,text:"Let rise 1 hr until doubled."},
+      {order:3,text:"Shape, top, bake at 500°F (260°C) 8–12 min."}
+    ],
+    tags:["stub","baseline"]
   };
-  return RecipeSchema.parse(base); // ensures arrays exist
 }
 
-// health
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, ts: Date.now() });
+app.get("/api/health",(req,res)=>{
+  res.json({ok:true,ts:Date.now()});
 });
 
-// parse endpoint: never 400 the UI; always return shaped recipe
-app.post("/api/llm/parse", async (req, res, next) => {
-  try {
-    const q = (req.body?.q ?? "").toString().trim();
-    // TODO: replace this stub with your real LLM call; keep the shape.
-    const recipe = okRecipe(q);
-
-    // If q has content, add minimal demo content so UI shows something
-    if (q) {
-      recipe.sections = [{ id: "s1", label: "Main", order: 1 }];
-      recipe.ingredients = [
-        { id: "i1", name: "Flour", qty: 2, unit: "cup", sectionId: "s1" },
-        { id: "i2", name: "Water", qty: 1, unit: "cup", sectionId: "s1" }
-      ];
-      recipe.steps = [
-        { order: 1, text: "Mix ingredients.", sectionId: "s1" },
-        { order: 2, text: "Bake until golden.", sectionId: "s1" }
-      ];
-      recipe.tags = ["stub"];
-    }
-
-    res.json({ ok: true, recipe });
-  } catch (err) {
-    next(err);
+app.post("/api/llm/parse",async(req,res)=>{
+  const q=(req.body?.q||"").toString();
+  if(!q)return res.status(400).json({ok:false,error:"missing q"});
+  try{
+    // future: hook your LLM here
+    const recipe=synth(q);
+    res.json({ok:true,recipe});
+  }catch(e){
+    res.json({ok:true,recipe:synth(q)});
   }
 });
 
-// 404 json (with CORS already applied by middleware)
-app.use((req, res) => {
-  res.status(404).json({ ok: false, error: "Not Found" });
-});
-
-// centralized error handler that STILL returns CORS’d JSON
-app.use((err, req, res, _next) => {
-  console.error("[server error]", err?.message || err);
-  const status = Number(err?.status || 500);
-  res.status(status).json({ ok: false, error: err?.message || "Internal Error" });
-});
-
-// Render requires binding to $PORT
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log("FoodBridge server on :" + port));
+app.listen(PORT,()=>console.log(`FoodBridge server on :${PORT}`));

@@ -1,0 +1,13 @@
+﻿:root{ --fg:#111; --muted:#666; --line:#ddd; --err:#900; --ok:#0a0;}
+body{font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial;color:var(--fg);margin:0;background:#fff}
+main{max-width:900px;margin:0 auto;padding:1.25rem}
+form{display:flex;gap:.5rem;margin-bottom:.75rem}
+input{flex:1;padding:.6rem .7rem;border:1px solid var(--line);border-radius:10px}
+button{padding:.6rem .9rem;border-radius:10px;border:1px solid var(--line);background:#fafafa;cursor:pointer}
+h2{margin:.8rem 0 .2rem}
+section{margin:.6rem 0;padding:.6rem;border:1px solid var(--line);border-radius:12px}
+.hint{color:var(--muted)}
+.loader{border:1px dashed var(--line);padding:.5rem .7rem;border-radius:10px}
+.error{color:#fff;background:#c33;padding:.55rem .7rem;border-radius:10px}
+.ok{color:#fff;background:#2c5;padding:.55rem .7rem;border-radius:10px}
+pre.log{white-space:pre-wrap;background:#f6f6f6;padding:.5rem;border:1px solid var(--line);border-radius:10px;max-height:40vh;overflow:auto}
