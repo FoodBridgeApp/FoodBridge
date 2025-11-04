@@ -1,76 +1,75 @@
 ﻿import express from "express";
+import cors from "cors";
+import bodyParser from "body-parser";
+import { z } from "zod";
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+const WHITELIST = new Set([
+  "https://foodbridgeapp.github.io",
+  "http://localhost:5173",
+  "http://localhost:4173",
+  "http://localhost:3000"
+]);
 
-// --- Single API router for everything ---
-const api = express.Router();
-
-// Health
-api.get("/health", (_req, res) => {
-  res.json({ ok: true, healthy: true, ts: Date.now() });
+// Log and validate origin for diagnostics
+app.use((req,res,next)=>{
+  const origin=req.headers.origin||"(none)";
+  const allowed=!origin||WHITELIST.has(origin);
+  console.log(`[CORS] ${req.method} ${req.path} | Origin=${origin} | Allowed=${allowed}`);
+  next();
 });
 
-// Ingest URL -> ogTitle/ogDesc/text
-api.post("/ingest/url", async (req, res) => {
-  try {
-    const url = (req.body && req.body.url) || "";
-    if (!url) return res.status(400).json({ error: "url required" });
-
-    const r = await fetch(url, { redirect: "follow" });
-    if (!r.ok) return res.status(502).json({ error: "failed to fetch source url", status: r.status });
-
-    let html = await r.text();
-    // strip scripts/styles
-    html = html
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[\s\S]*?<\/style>/gi, "");
-
-    const pickMeta = (name) => {
-      const rx = new RegExp(`<meta[^>]+(?:property|name)=["']${name}["'][^>]*content=["']([^"']+)["'][^>]*>`, "i");
-      const m = rx.exec(html);
-      return m ? m[1] : "";
-    };
-
-    const ogTitle = pickMeta("og:title") || pickMeta("twitter:title") || "";
-    const ogDesc  = pickMeta("og:description") || pickMeta("description") || "";
-    const text    = html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
-
-    res.json({ ok: true, data: { ogTitle, ogDesc, text } });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
+// Secure headers
+app.use((req,res,next)=>{
+  res.setHeader("X-Content-Type-Options","nosniff");
+  res.setHeader("X-Frame-Options","SAMEORIGIN");
+  next();
 });
 
-// Parse free-text into title/ingredients/steps
-api.post("/llm/parse", async (req, res) => {
-  try {
-    const raw = (req.body && req.body.text) ? String(req.body.text) : "";
-    if (!raw) return res.status(400).json({ error: "text required" });
+// CORS middleware + preflight
+app.use(cors({
+  origin:(origin,cb)=>{
+    if(!origin||WHITELIST.has(origin)) return cb(null,true);
+    return cb(new Error("CORS blocked: "+origin));
+  },
+  methods:["GET","POST","OPTIONS"],
+  allowedHeaders:["Content-Type","Authorization"],
+  maxAge:86400
+}));
+app.options("*", cors());
 
-    const [titlePart, rest] = raw.split(/:\s*/);
-    const title   = (titlePart || "Recipe").trim();
-    const ingBlob = rest || raw;
-    const ingredients = ingBlob.split(/[;,\n]/).map(s => s.trim()).filter(Boolean);
-    const steps = [
-      "Prepare ingredients.",
-      "Follow standard method based on the recipe text.",
-      "Adjust seasoning and serve."
-    ];
+// JSON body
+app.use(bodyParser.json({limit:"1mb"}));
 
-    res.json({ ok: true, data: { title, ingredients, steps } });
-  } catch (e) {
-    res.status(500).json({ ok:false, error: String(e?.message || e) });
-  }
+// ---- STUB ENDPOINT ----
+const Ingredient=z.object({id:z.string(),name:z.string(),qty:z.number().nullable().optional(),unit:z.string().nullable().optional(),sectionId:z.string().nullable().optional()});
+const Section=z.object({id:z.string(),label:z.string(),order:z.number()});
+const Step=z.object({order:z.number(),text:z.string(),sectionId:z.string().nullable().optional()});
+const Recipe=z.object({id:z.string(),title:z.string(),ingredients:z.array(Ingredient),sections:z.array(Section),steps:z.array(Step),tags:z.array(z.string()).optional().default([])});
+
+app.post("/api/llm/parse",(req,res)=>{
+  const q=(req.body?.q||"").toString().trim();
+  if(!q) return res.status(400).json({ok:false,error:"Missing q"});
+  const stub={
+    id:"stub-"+Date.now(),
+    title:`Quick parse for: ${q}`,
+    ingredients:[
+      {id:"i1",name:"Flour",qty:2,unit:"cup",sectionId:"s1"},
+      {id:"i2",name:"Water",qty:1,unit:"cup",sectionId:"s1"}
+    ],
+    sections:[{id:"s1",label:"Dough",order:1}],
+    steps:[
+      {order:1,text:"Mix ingredients until combined.",sectionId:"s1"},
+      {order:2,text:"Bake until golden.",sectionId:"s1"}
+    ],
+    tags:["stub"]
+  };
+  const parsed=Recipe.safeParse(stub);
+  if(!parsed.success) return res.status(500).json({ok:false,error:"Validation failed"});
+  res.json({ok:true,recipe:parsed.data});
 });
 
-// Mount router
-app.use("/api", api);
+app.get("/api/health",(req,res)=>res.json({ok:true,ts:Date.now()}));
 
-// Start server (Render sets PORT)
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`[foodbridge] server listening on ${PORT}`);
-});
-
-export default app;
+const port=process.env.PORT||10000;
+app.listen(port,()=>console.log(`[foodbridge] server listening on ${port}`));
