@@ -2,7 +2,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FoodBridge Lite</title>
-<!-- Inline 1x1 favicon to kill 404s -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2716%27 height=%2716%27%3E%3Crect width=%2716%27 height=%2716%27 fill=%27%23000%27/%3E%3C/svg%3E">
 <meta http-equiv="Cache-Control" content="no-cache">
 <style>
@@ -76,7 +75,6 @@ async function parse(q){
     throw new Error(\`Server error: \${msg}\`);
   }
 
-  // Normalize payload shape so UI never explodes
   const recipe = data?.recipe ?? {
     id: \`empty-\${Date.now()}\`,
     title: data?.title || \`Result for: \${q}\`,
