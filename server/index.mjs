@@ -12,15 +12,14 @@ const WHITELIST = new Set([
   "http://localhost:3000"
 ]);
 
-// Basic diagnostics while stabilizing
+// Diagnostics to stdout so we can see what the UI is doing
 app.use((req,res,next)=>{
   const origin=req.headers.origin||"(none)";
-  const allowed=!origin||WHITELIST.has(origin);
-  console.log(`[CORS] ${req.method} ${req.path} | Origin=${origin} | Allowed=${allowed}`);
+  console.log(`[REQ] ${req.method} ${req.path} | origin=${origin}`);
   next();
 });
 
-// Security/caching headers
+// Security + caching
 app.use((req,res,next)=>{
   res.setHeader("X-Content-Type-Options","nosniff");
   res.setHeader("X-Frame-Options","SAMEORIGIN");
@@ -28,16 +27,16 @@ app.use((req,res,next)=>{
   next();
 });
 
-// CORS + preflight
+// CORS + preflight (strict but allowed for GH Pages + localhost)
 app.use(cors({
-  origin:(origin,cb)=>{ if(!origin||WHITELIST.has(origin)) return cb(null,true); return cb(new Error("CORS blocked: "+origin)); },
+  origin:(origin,cb)=>{ if(!origin || WHITELIST.has(origin)) return cb(null,true); return cb(new Error("CORS blocked: "+origin)); },
   methods:["GET","POST","OPTIONS"],
   allowedHeaders:["Content-Type","Authorization"],
   maxAge:86400
 }));
 app.options("*", cors());
 
-// JSON body
+// Body parser
 app.use(bodyParser.json({ limit:"1mb" }));
 
 // ---- schema ----
@@ -71,32 +70,60 @@ function buildStub(q){
   };
 }
 
-// ultra-compatible envelope: every legacy path gets data
-function respondCompat(res, recipe){
-  // also attach obvious fallbacks for naive selectors
+// Shape normalizer: guarantees arrays/objects exist so .map never hits undefined
+function ensureArrays(recipe){
+  const r = recipe || { id:"stub", title:"Recipe", ingredients:[], sections:[], steps:[], tags:[] };
+  r.ingredients = Array.isArray(r.ingredients) ? r.ingredients : [];
+  r.sections    = Array.isArray(r.sections)    ? r.sections    : [];
+  r.steps       = Array.isArray(r.steps)       ? r.steps       : [];
+  r.tags        = Array.isArray(r.tags)        ? r.tags        : [];
+  return r;
+}
+
+// Ultra-compat envelope to satisfy unknown selectors
+function respondOmni(res, recipe){
+  const r = ensureArrays(recipe);
+
+  // Common legacy collections that UI might map over
+  const listLike = [r];
+
   const payload = {
     ok: true,
 
-    // Primary modern
-    recipe,
+    // Modern
+    recipe: r,
 
-    // Legacy nested
-    data: { recipe },
-    result: { recipe },
+    // Mirrors/aliases (a LOT of them on purpose)
+    data:            { recipe: r, items: listLike, results: listLike, list: listLike },
+    result:          { recipe: r, items: listLike, results: listLike, list: listLike },
+    payload:         { recipe: r, items: listLike, results: listLike, list: listLike },
+    meta:            { ok: true },
 
-    // Arrays some selectors expect
-    recipes: [recipe],
-    items: [recipe],
-    payload: { recipe },
+    // Flat collections some selectors may expect
+    recipes:  listLike,
+    items:    listLike,
+    results:  listLike,
+    list:     listLike,
+    rows:     listLike,
 
-    // Top-level mirrors that some selectors read directly
-    id: recipe.id,
-    title: recipe.title,
-    ingredients: recipe.ingredients,
-    sections: recipe.sections,
-    steps: recipe.steps,
-    tags: recipe.tags
+    // Top-level mirrors for naive access
+    id: r.id,
+    title: r.title,
+    ingredients: r.ingredients,
+    sections: r.sections,
+    steps: r.steps,
+    tags: r.tags,
+
+    // LLM-style shapes sometimes seen
+    choices: [
+      { message: { content: JSON.stringify({ recipe:r }) }, recipe: r }
+    ],
+    output: { recipe: r }
   };
+
+  // Log keys that are arrays to confirm availability
+  const arrayKeys = Object.keys(payload).filter(k => Array.isArray(payload[k]));
+  console.log("[RESP] arrays:", arrayKeys.join(", "));
   return res.json(payload);
 }
 
@@ -105,25 +132,15 @@ function handleParse(req, res){
   const stub = buildStub(q);
   const parsed = Recipe.safeParse(stub);
   if(!parsed.success){
-    // give a minimal compat object even on error to avoid undefined access in UI
-    const safe = {
-      id:"stub-error",
-      title:"Recipe",
-      ingredients:[],
-      sections:[],
-      steps:[],
-      tags:[]
-    };
-    return respondCompat(res, safe);
+    console.warn("[WARN] Validation failed; serving safe recipe.");
+    return respondOmni(res, ensureArrays(null));
   }
-  return respondCompat(res, parsed.data);
+  return respondOmni(res, parsed.data);
 }
 
 app.post("/api/llm/parse", handleParse);
 app.get ("/api/llm/parse", handleParse);
-
-// Explicit legacy alias just in case the UI points there
-app.all("/api/parse", handleParse);
+app.all ("/api/parse",      handleParse); // legacy alias
 
 app.get("/api/health", (_req,res)=> res.json({ ok:true, ts:Date.now() }));
 
