@@ -7,8 +7,8 @@
   tags: []
 });
 
-export function coerceRecipe(input) {
-  const r = input ?? {};
+export function coerceRecipe(x) {
+  const r = x ?? {};
   return {
     id: String(r.id ?? "unknown"),
     title: String(r.title ?? ""),

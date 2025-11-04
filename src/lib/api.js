@@ -1,28 +1,27 @@
-﻿import { coerceRecipe, emptyRecipe } from "./shape";
+﻿import { emptyRecipe, coerceRecipe } from "./shape";
 
 export const API_BASE = "https://foodbridge-server-rv0a.onrender.com";
 
 export async function parseRecipe(q) {
+  const body = { q: String(q ?? "").trim() };
+  if (!body.q) return { ok:false, error:"Type something (e.g., 'pizza')", recipe: emptyRecipe };
+
   let resp;
   try {
     resp = await fetch(\\/api/llm/parse\, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q: String(q ?? "").trim() })
+      body: JSON.stringify(body)
     });
-  } catch (e) {
-    return { ok: false, error: "Network error", recipe: emptyRecipe };
+  } catch {
+    return { ok:false, error:"Network error", recipe: emptyRecipe };
   }
 
-  // If server returns non-200, still try to read JSON; if that fails, fall back
   let data = null;
   try { data = await resp.json(); } catch { /* ignore */ }
 
-  if (!resp.ok || !data || data.ok === false) {
-    const msg = (data && (data.error || data.message)) || "LLM parse failed";
-    return { ok: false, error: msg, recipe: emptyRecipe };
-  }
-
-  const recipe = coerceRecipe(data.recipe);
-  return { ok: true, recipe };
+  // Accept any shape; coerce to safe recipe
+  const recipe = coerceRecipe(data?.recipe);
+  const ok = !!(data && (data.ok ?? resp.ok) && recipe);
+  return ok ? { ok:true, recipe } : { ok:false, error:(data?.error||"LLM parse failed"), recipe: emptyRecipe };
 }
