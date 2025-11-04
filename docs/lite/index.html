@@ -1,28 +1,17 @@
 ﻿<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>FoodBridge Lite</title>
-  <link rel="icon" href="../favicon.ico">
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <main class="page">
-    <h1>FoodBridge Lite</h1>
-    <form id="f" class="searchbar">
-      <input id="q" placeholder="Paste a recipe URL or type (e.g., pizza)" />
-      <button id="go" type="submit">Go</button>
-    </form>
-    <div id="toast" class="toast" hidden></div>
-    <section id="result" class="result" hidden>
-      <h2 id="title"></h2>
-      <h3>Ingredients</h3>
-      <ul id="ings"></ul>
-      <h3>Steps</h3>
-      <ol id="steps"></ol>
-    </section>
-  </main>
-  <script src="app.js"></script>
-</body>
-</html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FoodBridge Lite</title><meta http-equiv="Cache-Control" content="no-cache"><meta http-equiv="Cache-Control" content="no-cache">
+<link rel="icon" href="./favicon.ico">
+<link rel="stylesheet" href="./styles.css">
+<main id="app">
+  <form id="f">
+    <input id="q" placeholder="Type a dish or paste a link (e.g., pizza)" autofocus />
+    <button>Parse</button>
+  </form>
+  <div id="status" class="hint">Ready.</div>
+  <div id="result" hidden></div>
+</main>
+<script src="./app.js"></script>
+
+
