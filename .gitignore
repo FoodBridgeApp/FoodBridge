@@ -18,3 +18,4 @@ pnpm-debug.log*
 
 # OS cruft
 Thumbs.db
+client/tsconfig.tsbuildinfo
