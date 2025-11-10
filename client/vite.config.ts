@@ -1,13 +1,13 @@
-﻿import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+﻿import { defineConfig, loadEnv } from "vite";
 
-// Use /FoodBridge/ in production (e.g., GitHub Pages), / in dev
-const isProd = process.env.NODE_ENV === "production";
-
-export default defineConfig({
-  plugins: [react()],
-  base: isProd ? "/FoodBridge/" : "/",
-  server: {
-    port: 5173
-  }
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const apiBase = env.VITE_API_BASE ?? "http://localhost:8080";
+  return {
+    server: { port: 5173, strictPort: true },
+    preview: { port: 5173, strictPort: true },
+    define: {
+      __API_BASE__: JSON.stringify(apiBase)
+    }
+  };
 });

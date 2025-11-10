@@ -1,24 +1,16 @@
 {
-  "name": "foodbridge-server",
+  "name": "foodbridge",
   "private": true,
-  "type": "module",
+  "version": "0.1.0",
+  "workspaces": ["server", "client"],
   "scripts": {
-    "start": "node server/index.mjs",
-    "start:server": "node server/index.mjs"
+    "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm --workspace server run dev",
+    "dev:client": "npm --workspace client run dev",
+    "build": "npm -w server run build && npm -w client run build",
+    "start": "npm -w server run start"
   },
-  "dependencies": {
-    "body-parser": "^2.2.0",
-    "compression": "^1.8.1",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.21.2",
-    "express-rate-limit": "^8.2.1",
-    "helmet": "^8.1.0",
-    "morgan": "^1.10.1",
-    "nodemailer": "^6.9.13",
-    "zod": "^4.1.12"
-  },
-  "engines": {
-    "node": ">=20.0.0"
+  "devDependencies": {
+    "concurrently": "^9.1.0"
   }
 }

@@ -1,21 +1,24 @@
-﻿# Node / Vite / TypeScript
-node_modules/
-dist/
-build/
-coverage/
-*.log
+﻿# Node
+node_modules
 npm-debug.log*
-yarn-debug.log*
 pnpm-debug.log*
-.vscode/
-.DS_Store
+yarn-debug.log*
+yarn-error.log*
+*.log
 
-# Env & secrets
+# Env
 .env
-*.env
-.env.*
-.envrc
+server/.env
+client/.env
 
-# OS cruft
-Thumbs.db
-client/tsconfig.tsbuildinfo
+# Build outputs
+dist
+server/dist
+client/dist
+
+# Vite
+.client
+.vite
+
+# VSCode
+.vscode/

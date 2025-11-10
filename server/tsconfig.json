@@ -1,7 +1,6 @@
-{
+﻿{
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
     "module": "ES2022",
     "moduleResolution": "Bundler",
     "outDir": "dist",
@@ -11,5 +10,5 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "test"]
+  "include": ["src"]
 }
