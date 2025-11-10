@@ -1,5 +1,5 @@
-import { useSelector } from "react-redux";
-import { RootState } from "../store";
+﻿import { useSelector } from "react-redux";
+import type { RootState } from "../store";
 
 export default function History() {
   const history = useSelector((s: RootState) => s.session.history);
@@ -15,10 +15,11 @@ export default function History() {
           <div className="font-medium">{h.title}</div>
           <div className="opacity-70 mt-1">
             {h.ingredients.slice(0, 4).join(", ")}
-            {h.ingredients.length > 4 ? "…" : ""}
+            {h.ingredients.length > 4 ? "â€¦" : ""}
           </div>
         </li>
       ))}
     </ul>
   );
 }
+
