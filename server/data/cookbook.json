@@ -1,0 +1,26 @@
+﻿{
+  "items": [
+    {
+      "id": "eggs-avo-toast",
+      "title": "Eggs & Avocado Toast",
+      "tags": ["breakfast","quick"],
+      "ingredients": [
+        { "name":"eggs", "qty":"2" },
+        { "name":"avocado", "qty":"1/2" },
+        { "name":"sourdough bread", "qty":"2 slices" }
+      ],
+      "steps": ["Toast bread","Fry eggs","Assemble & season"]
+    },
+    {
+      "id": "tomato-salad",
+      "title": "Tomato Salad",
+      "tags": ["quick"],
+      "ingredients": [
+        { "name":"tomato", "qty":"2" },
+        { "name":"olive oil", "qty":"1 tbsp" },
+        { "name":"salt", "qty":"pinch" }
+      ],
+      "steps": ["Chop","Dress","Serve"]
+    }
+  ]
+}

@@ -92,19 +92,3 @@ try {
 } catch (e) { try { console.warn('[FB] /api/cart/add error', e?.message ?? e) } catch {} }
 // ===== END FB PATCH =====
 
-
-// === FB SPRINT1 PATCH ===
-import dotenv from 'dotenv';
-dotenv.config();
-const PORT = process.env.PORT || 3001;
-import helmet from 'helmet';
-if (typeof app?.use === 'function') {
-  app.use(helmet());
-  console.log('[FB] helmet enabled');
-}
-import rateLimit from 'express-rate-limit';
-if (typeof app?.use === 'function') {
-  const limiter = rateLimit({ windowMs: 60_000, max: 120 }); // 120 req/min
-  app.use(limiter);
-  console.log('[FB] rate-limit enabled');
-}
