@@ -1,7 +1,1 @@
-*.js text=auto
-*.json text=auto
-*.css text=auto
-*.html text=auto
-*.ts text=auto
-*.tsx text=auto
-
+﻿* text=auto eol=lf
