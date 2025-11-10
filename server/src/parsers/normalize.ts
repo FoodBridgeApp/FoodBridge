@@ -1,74 +1,64 @@
 ﻿import { Ingredient, UnitEnum } from "../../../packages/shared/src/schemas/RecipeSchema";
 
-export function normalizeIngredient(rawLine: string, id: string): Ingredient {
-  const raw = rawLine.trim();
-  if (!raw) {
-    return { id, raw: "", name: "", quantity: null, unit: null, notes: null };
-  }
-  const qtyUnitRegex = /^([\\d/.\\s]+)?\\s*(cup|cups|tsp|teaspoon|teaspoons|tbsp|tablespoon|tablespoons|oz|ounce|ounces|lb|pound|pounds|g|gram|grams|kg|ml|l)?\\s*(.*)$/i;
-  const match = raw.match(qtyUnitRegex);
-
-  let quantity: number | null = null;
-  let unit: string | null = null;
-  let name = raw;
-  let notes: string | null = null;
-
-  if (match) {
-    const [, qtyPart, unitPart, tail] = match as any;
-    if (qtyPart) quantity = parseQuantity(qtyPart.trim());
-    if (unitPart) unit = mapUnit(unitPart.trim().toLowerCase());
-    else if (quantity !== null) unit = "unit";
-    name = (tail || raw).replace(/\\s*\\(.*?\\)\\s*/g, "").trim();
-    const notesMatch = raw.match(/\\((.*?)\\)/);
-    if (notesMatch) notes = notesMatch[1];
-  }
-
-  return {
-    id,
-    raw,
-    name: canonicalizeName(name),
-    quantity,
-    unit: unit ? (UnitEnum.options.includes(unit as any) ? (unit as any) : null) : null,
-    notes
-  };
-}
-
+/** Convert "1 1/2" or "1/2" to 1.5 */
 function parseQuantity(q: string): number | null {
-  try {
-    const parts = q.split(" ").filter(Boolean);
-    let total = 0;
-    for (const p of parts) {
-      if (p.includes("/")) {
-        const [a,b] = p.split("/").map(Number);
-        if (!Number.isNaN(a) && !Number.isNaN(b) && b !== 0) total += a/b;
-      } else {
-        const n = Number(p);
-        if (!Number.isNaN(n)) total += n;
-      }
+  q = q.trim();
+  // "1 1/2"
+  const mix = q.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+  if (mix) {
+    const whole = parseFloat(mix[1]);
+    const num = parseFloat(mix[2]);
+    const den = parseFloat(mix[3]);
+    if (!isNaN(whole) && !isNaN(num) && !isNaN(den) && den !== 0) return whole + (num/den);
+  }
+  // "1/2"
+  const frac = q.match(/^(\d+)\/(\d+)$/);
+  if (frac) {
+    const num = parseFloat(frac[1]);
+    const den = parseFloat(frac[2]);
+    if (!isNaN(num) && !isNaN(den) && den !== 0) return num/den;
+  }
+  const f = parseFloat(q);
+  return isNaN(f) ? null : f;
+}
+
+const UNIT_WORDS = [
+  "g","kg","mg","lb","lbs","oz",
+  "ml","l","tsp","tbsp","cup","cups","pint","pints","qt","gal",
+  "clove","cloves","slice","slices","can","cans","packet","packets",
+  "stick","sticks","dash","pinch"
+];
+
+export function normalizeIngredient(rawLine: string, id: string): Ingredient {
+  const line = rawLine.trim().replace(/\s+/g, " ");
+
+  // 1) qty + unit + name  (e.g., "200 g spaghetti", "2 tbsp olive oil")
+  let m = line.match(/^(\d+(?:\.\d+)?|\d+\s+\d+\/\d+|\d+\/\d+)\s*([a-zA-Z]+)\s+(.+)$/);
+  if (m) {
+    const qty = parseQuantity(m[1]) ?? parseFloat(m[1]);
+    const unitRaw = m[2].toLowerCase();
+    const unit = UNIT_WORDS.includes(unitRaw) ? unitRaw : null;
+    const name = m[3].trim();
+    return { id, raw: rawLine, name, quantity: qty ?? null, unit, notes: null };
+  }
+
+  // 2) qty + name (no obvious unit)  (e.g., "3 cloves garlic", "1 onion")
+  m = line.match(/^(\d+(?:\.\d+)?|\d+\s+\d+\/\d+|\d+\/\d+)\s+(.+)$/);
+  if (m) {
+    const qty = parseQuantity(m[1]) ?? parseFloat(m[1]);
+    const rest = m[2].trim();
+
+    // if the next token is a unit word, split it
+    const parts = rest.split(" ");
+    if (parts.length > 1 && UNIT_WORDS.includes(parts[0].toLowerCase())) {
+      const unit = parts.shift()!.toLowerCase();
+      const name = parts.join(" ").trim();
+      return { id, raw: rawLine, name, quantity: qty ?? null, unit, notes: null };
     }
-    return total === 0 ? null : total;
-  } catch { return null; }
+
+    return { id, raw: rawLine, name: rest, quantity: qty ?? null, unit: null, notes: null };
+  }
+
+  // 3) bare name
+  return { id, raw: rawLine, name: line, quantity: null, unit: null, notes: null };
 }
-
-function mapUnit(u: string): string | null {
-  const m: Record<string,string> = {
-    teaspoon: "tsp", teaspoons: "tsp",
-    tbsp: "tbsp", tablespoon: "tbsp", tablespoons: "tbsp",
-    cup: "cup", cups: "cup",
-    ounce: "oz", ounces: "oz",
-    pound: "lb", pounds: "lb",
-    g: "g", gram: "g", grams: "g",
-    kg: "kg", ml: "ml", l: "l"
-  };
-  return m[u] ?? null;
-}
-function canonicalizeName(n: string): string {
-  return n.toLowerCase().replace(/\\s+/g, " ").trim();
-}
-
-
-
-
-
-
-
